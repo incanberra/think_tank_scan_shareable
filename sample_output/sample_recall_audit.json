@@ -1,0 +1,33 @@
+{
+  "run_date": "2026-01-15",
+  "model": "example/model",
+  "scan_quality": {
+    "raw_candidates_found": 42,
+    "candidates_enriched": 38,
+    "candidates_sent_to_model": 12,
+    "included_items": 5,
+    "excluded_items": 7,
+    "new_items": 9,
+    "seen_before_items": 29,
+    "undated_seen_before_skipped": 4
+  },
+  "recall_risks": {
+    "sources_with_no_raw_candidates": [
+      "Example Source With No Candidates"
+    ],
+    "sources_with_candidates_but_no_reviewed_items": [
+      "Example Source With Only Old Items",
+      "Example Source With Listing Pages"
+    ],
+    "native_discovery_rejection_counts": {
+      "native_rejected_listing_page": 10,
+      "native_rejected_navigation_title": 6,
+      "native_rejected_sitemap_xml": 2
+    },
+    "date_uncertainty_counts": {
+      "date_unknown_seen_before_skipped": 4,
+      "date_unknown_seen_before_content_changed": 1
+    },
+    "ledger_status": "existing ledger used"
+  }
+}

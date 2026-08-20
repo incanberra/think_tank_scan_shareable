@@ -1,0 +1,8 @@
+google-genai
+python-dotenv
+beautifulsoup4
+lxml
+reportlab
+jinja2
+requests
+pypdf

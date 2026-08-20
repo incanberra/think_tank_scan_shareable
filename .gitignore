@@ -1,0 +1,23 @@
+# Local secrets
+.env
+
+# Python cache/build outputs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Generated scanner outputs
+reports/
+logs/
+.cache/
+.scanner_state/
+
+# Local editor settings
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
