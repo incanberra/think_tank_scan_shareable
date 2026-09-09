@@ -441,6 +441,8 @@ def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page
             continue
 
         soup = BeautifulSoup(html, "html.parser")
+        for navigation in soup.select("nav, header, footer, [role=navigation]"):
+            navigation.decompose()
         links_checked = 0
         for anchor in soup.find_all("a", href=True):
             if links_checked >= max_links_per_page:
@@ -452,7 +454,6 @@ def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page
             title = clean_title(anchor.get_text(" ", strip=True))
             if len(title) < 8:
                 continue
-            links_checked += 1
             date_dt = extract_date_near_anchor(anchor)
             rejection_reason = native_rejection_reason(
                 url,
@@ -469,6 +470,7 @@ def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page
 
             key = normalize_url(url)
             if key not in raw_candidates:
+                links_checked += 1
                 summary = f"Found on index page: {index_url}"
                 raw_candidates[key] = candidate_from_url(
                     source,

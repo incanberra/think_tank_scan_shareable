@@ -208,3 +208,19 @@ separate selected candidates, cache hits, model submissions and review outcomes.
 
 The first run after upgrading refreshes the old extraction cache and initializes
 workflow state. It may take longer. Existing duplicate history is preserved.
+
+
+### 10 September reliability follow-up
+
+The extractor preserves structural page/article containers when CSS names mention
+cookies or header spacing. This fixes summary-only extraction on Atlantic Council
+and CFR. Extraction cache schema 4 refreshes previously damaged entries. Native
+index discovery excludes navigation before its link budget and removes known
+programme/listing candidates before its source quota.
+
+OpenRouter JSON requests now allow 120 seconds for a response, retry transport
+timeouts/connection failures, require parameter-compatible providers, and reject
+truncated completions. Per-request audit records include actual provider/model,
+response ID, timing, token usage and reported cost when the API supplies them.
+Permanent authentication failures are not retried. The configured model is unchanged.
+Run `python -m unittest test_scanner_reliability test_scan_workflow test_ai_client -v`.

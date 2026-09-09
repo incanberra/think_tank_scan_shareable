@@ -157,6 +157,14 @@ class ScanRun:
                     by_key.setdefault(key, entry["item"])
         available = []
         for key, item in by_key.items():
+            import eligibility
+            # URL-only programme/listing exclusions are safe before fetching.
+            # Event and date eligibility require enrichment, so keep those here.
+            reason = eligibility.exclusion_reason(item)
+            if reason in {"programme_or_project_page", "not_individual_content"}:
+                self.metrics["non_content_removed_before_cap"] += 1
+                self.state["backlog"].pop(key, None)
+                continue
             if self.already_reported(item):
                 self.metrics["reported_removed_before_cap"] += 1
                 self.state["backlog"].pop(key, None)
@@ -177,6 +185,8 @@ class ScanRun:
         for item in ordered:
             key = item_key(item)
             self.state["backlog"].setdefault(key, {"item": serializable(item), "deferred_at": self.started.isoformat()})
+        for item in chosen:
+            item["native_queue_key"] = item_key(item)
         self.native_queue_keys.update(item_key(i) for i in chosen)
         self.metrics["native_deferred"] += max(0, len(ordered) - len(chosen))
         self.persist()  # Keep deferred and selected work even if enrichment crashes.
@@ -198,8 +208,9 @@ class ScanRun:
     def record_selection(self, items):
         for item in items:
             key = item_key(item)
-            if key in self.native_queue_keys:
-                self.state["backlog"].pop(key, None)
+            queue_key = item.get("native_queue_key") or key
+            if queue_key in self.native_queue_keys:
+                self.state["backlog"].pop(queue_key, None)
             reason = item.get("review_selection_reason", "")
             if reason in RETRY_REASONS or (item.get("review_selected") and item.get("date_status") == "date_unknown"):
                 self.remember_pending(item, reason or "publication_date_unverified")
@@ -258,7 +269,7 @@ class ScanRun:
             "prompt_version": PROMPT_VERSION, "prior_delivered_today": self.prior_delivered,
             "edition": "supplement" if self.prior_delivered else "daily", "stage_seconds": self.timings,
             "metrics": dict(self.metrics), "pending_status_counts": dict(Counter(i["status"] for i in self.state["pending"].values())),
-            "discovery_backlog": len(self.state["backlog"]), "source_status": self.status_notes, "network": self.network}
+            "discovery_backlog": len(self.state["backlog"]), "source_status": self.status_notes, "network": self.network, "model_requests": getattr(self, "model_requests", [])}
 
     def save_manifest(self, status, **extra):
         atomic_json_write(str(self.output_dir / "pending_review.json"), self.state["pending"])

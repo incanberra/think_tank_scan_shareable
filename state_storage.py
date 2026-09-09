@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from functools import wraps
 
@@ -69,7 +70,16 @@ def atomic_json_write(path, value):
             json.dump(value, handle, indent=2, ensure_ascii=False)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        last_error = None
+        for attempt in range(6):
+            try:
+                os.replace(temporary, path)
+                last_error = None
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

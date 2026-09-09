@@ -59,6 +59,34 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(len(run.state['backlog']),2)
             remaining,_=run.cap_native(items[:1])
             self.assertTrue(set(i['url'] for i in selected).isdisjoint(i['url'] for i in remaining))
+    def test_programme_pages_do_not_consume_native_quota(self):
+        run=self.run_state()
+        items=[publication(url='https://www.sipri.org/research/peace',institution='SIPRI'),publication(url='https://www.sipri.org/commentary/2026/new-paper',institution='SIPRI')]
+        with patch.object(config,'MAX_NATIVE_CANDIDATES_PER_SOURCE',1):
+            selected,_=run.cap_native(items)
+        self.assertEqual(selected[0]['url'],items[1]['url'])
+        self.assertEqual(run.metrics['non_content_removed_before_cap'],1)
+
+    def test_navigation_cannot_exhaust_index_link_budget(self):
+        import source_discovery
+        html='<nav>'+''.join(f'<a href="/reports/nav-{i}">Navigation link {i}</a>' for i in range(100))+'</nav><main><a href="/reports/current-study">Current research study</a></main>'
+        with patch.object(source_discovery,'fetch_text',return_value=(html,'ok')),patch.object(source_discovery.time,'sleep'):
+            items,_,_=source_discovery.scan_index_pages({'name':'Example','domain':'example.org','base_url':'https://example.org','index_paths':['/']},'2026-09-10',max_links_per_page=1)
+        self.assertEqual([i['url'] for i in items],['https://example.org/reports/current-study'])
+
+    def test_cookie_body_and_header_spacing_preserve_article(self):
+        text='Fertilizer supply disruption is affecting global food security. '*40
+        html='<body class="cookies-not-set"><article class="pt-header-height"><div class="rich-text"><p>Short introductory summary. '+('x'*310)+'</p></div><p>'+text+'</p></article><nav>Navigation only</nav></body>'
+        extracted=content_extractor.extract_text_from_html(html)
+        self.assertIn(text.strip(),extracted)
+        self.assertNotIn('Navigation only',extracted)
+
+    def test_redirected_candidate_is_removed_from_discovery_backlog(self):
+        run=self.run_state();selected,_=run.cap_native([publication(url='https://example.org/reports/old-url')])
+        selected[0].update(canonical_url='https://example.org/reports/new-url',review_selected=False,review_selection_reason='publication_out_of_window')
+        run.record_selection(selected)
+        self.assertEqual(run.state['backlog'],{})
+
     def test_source_checkpoint_closes_gap_but_failure_does_not_advance(self):
         run=self.run_state();old=(run.cutoff-timedelta(days=5)).isoformat()
         run.state['checkpoints']={'healthy':old,'broken':old}

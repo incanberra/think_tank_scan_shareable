@@ -119,7 +119,7 @@ def load_cache_entry(url):
         with open(path, "r", encoding="utf-8") as handle:
             entry = json.load(handle)
             # Old caches mixed modification and publication dates. Refetch them.
-            return entry if entry.get("schema_version") == 3 else None
+            return entry if entry.get("schema_version") == 4 else None
     except Exception:
         return None
 
@@ -152,7 +152,7 @@ def write_cache_entry(request_url, page_data, response_headers=None):
     if page_data.get("canonical_url"):
         page_data["canonical_url"] = resolve_canonical_url(page_data["canonical_url"], page_data.get("resolved_url") or request_url)
     entry = {
-        "schema_version": 3,
+        "schema_version": 4,
         "request_url": request_url,
         "canonical_url": page_data.get("canonical_url") or request_url,
         "cache_saved_at": utc_now_iso(),
@@ -492,7 +492,8 @@ def remove_boilerplate(soup):
                 str(tag.get("aria-label", "")),
             ]
         ).lower()
-        if any(term in attrs for term in boilerplate_terms):
+        protected = tag.name in {"html", "body", "main", "article"} or tag.find("article") is not None
+        if not protected and any(term in attrs for term in boilerplate_terms):
             tag.decompose()
 
 
@@ -526,7 +527,11 @@ def extract_text_from_html(html, fallback_description=""):
     structured = extract_json_ld_body(soup)
     remove_boilerplate(soup)
     candidates = []
-    for root in extract_candidate_roots(soup):
+    roots = extract_candidate_roots(soup)
+    # Generic rich-text classes also label teasers and single paragraphs. Prefer
+    # an article container to those snippets when the publisher supplies one.
+    roots.sort(key=lambda root: 0 if root.name == "article" else 1)
+    for root in roots:
         blocks = []
         for tag in root.find_all(["h1", "h2", "h3", "p", "li", "blockquote"]):
             text = clean_text(tag.get_text(" "))
