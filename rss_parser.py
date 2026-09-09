@@ -1,10 +1,13 @@
 import requests
+import http_client
+import content_extractor
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import email.utils
 import urllib3
 import re
+from seen_ledger import normalize_url
 from config import RSS_FEEDS, SOURCE_DOMAINS, TIMEZONE_CANBERRA
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -77,9 +80,10 @@ def fetch_rss_items(run_date_str, coverage_hours=48):
     status_notes = {}
     
     for institution, url in RSS_FEEDS.items():
+        start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours, institution)
         print(f"[*] Scanning feed for: {institution}...")
         try:
-            r = session.get(url, timeout=15, verify=False)
+            r = http_client.get(url, session=session, timeout=15, verify=False)
             if r.status_code != 200:
                 print(f"    [-] Failed to fetch feed, status code: {r.status_code}")
                 status_notes[institution] = f"checked/failed (HTTP {r.status_code})"
@@ -118,24 +122,29 @@ def fetch_rss_items(run_date_str, coverage_hours=48):
                     continue
                 
                 # Clean URL (remove query parameters like utm_source)
-                url_str = url_str.split("?")[0].split("#")[0]
+                url_str = normalize_url(url_str)
+                if not url_str:
+                    continue
                 
                 # Extract title
                 title = entry.find("title")
                 title_str = title.text.strip() if title else "Untitled"
                 
                 # Extract publication date
-                pub_date_tag = entry.find("pubDate") or entry.find("published") or entry.find("updated") or entry.find("dc:date")
+                pub_date_tag = entry.find("pubDate") or entry.find("published") or entry.find("dc:date")
                 pub_date_str = pub_date_tag.text.strip() if pub_date_tag else ""
+                updated_tag = entry.find("updated")
+                updated_dt = parse_feed_date(updated_tag.text.strip()) if updated_tag else None
                 
                 pub_dt = parse_feed_date(pub_date_str)
                 
                 # If date could not be parsed, skip or default (we must be strict about 48-hour coverage)
-                if not pub_dt:
+                discovery_dt = pub_dt or updated_dt
+                if not discovery_dt:
                     continue
                 
                 # Convert pub date to Canberra time for comparisons
-                pub_dt_canberra = pub_dt.astimezone(canberra_tz)
+                pub_dt_canberra = discovery_dt.astimezone(canberra_tz)
                 
                 # Check if item falls within coverage window
                 if start_dt <= pub_dt_canberra <= end_dt:
@@ -161,13 +170,16 @@ def fetch_rss_items(run_date_str, coverage_hours=48):
                     item_data = {
                         "title": title_str,
                         "institution": institution,
-                        "date": pub_dt_canberra.strftime("%d %B %Y"), # Australian date format
+                        "date": pub_dt_canberra.strftime("%d %B %Y") if pub_dt else "", # Australian date format
                         "author": author_str,
                         "tags": categories,
                         "summary": desc_str, # Will be rewritten/analyzed by LLM
                         "raw_summary": desc_str,
                         "url": url_str,
-                        "published_at": pub_dt_canberra,
+                        "published_at": pub_dt_canberra if pub_dt else None,
+                        "date_source": "rss_published" if pub_dt else "rss_updated_only",
+                        "modified_at": updated_dt.isoformat() if updated_dt else "",
+                        "modified_date_source": "rss_updated" if updated_dt else "",
                         "source_domain": SOURCE_DOMAINS.get(institution, ""),
                         "discovery_method": "rss",
                         "discovery_methods": ["rss"],

@@ -8,6 +8,9 @@ import urllib3
 from bs4 import BeautifulSoup
 
 import config
+import scan_runtime
+import http_client
+from seen_ledger import normalize_url
 import content_extractor
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -179,7 +182,7 @@ def source_base_url(source):
 
 def fetch_text(url, timeout=20):
     try:
-        response = requests.get(url, headers=HEADERS, timeout=timeout, verify=False)
+        response = http_client.get(url, headers=HEADERS, timeout=timeout, verify=False)
     except Exception as exc:
         return None, f"fetch_failed ({str(exc)[:80]})"
     if response.status_code != 200:
@@ -210,11 +213,11 @@ def native_rejection_reason(url, title="", allow_dated_listing=False):
         return "native_rejected_listing_page"
     if path.endswith("/robots.txt") or any(token in path for token in NOISY_PATH_TOKENS):
         return "native_rejected_non_content_path"
-    if query_keys and query_keys.issubset({"page", "paged", "p"}):
+    if query_keys and query_keys.issubset({"page", "paged"}):
         return "native_rejected_pagination_url"
     if title_key in NOISY_TITLE_EXACT or any(title_key.startswith(prefix) for prefix in NOISY_TITLE_PREFIXES):
         return "native_rejected_navigation_title"
-    if not allow_dated_listing and path in GENERIC_LISTING_PATHS:
+    if path in GENERIC_LISTING_PATHS or (path == "/" and not query_keys.intersection({"p", "id"})) or path.endswith("/events"):
         return "native_rejected_listing_page"
     return ""
 
@@ -254,14 +257,17 @@ def candidate_from_url(source, url, method, title="", summary="", date_value="",
     return {
         "title": clean_title(title) or url.rstrip("/").split("/")[-1].replace("-", " ").title(),
         "institution": source["name"],
-        "date": display_date,
+        "date": display_date if method != "sitemap" else "",
         "author": "",
         "summary": summary,
         "raw_summary": summary,
         "url": url.split("#")[0],
         "item_type": infer_item_type(url),
         "source_domain": source["domain"],
-        "published_at": parsed_dt,
+        "published_at": parsed_dt if method != "sitemap" else None,
+        "date_source": "index_publication" if method == "index_page" else "",
+        "modified_at": parsed_dt.isoformat() if method == "sitemap" and parsed_dt else "",
+        "modified_date_source": "sitemap_lastmod" if method == "sitemap" else "",
         "discovery_method": method,
         "discovery_methods": [method],
         "discovery_query": query,
@@ -331,7 +337,7 @@ def sitemap_url_relevant(sitemap_url):
 
 
 def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_urls=2500):
-    start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours)
+    start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours, source["name"])
     sitemap_urls, robots_status = discover_sitemap_urls(source)
     seen_sitemaps = set()
     queue = [url for url in sitemap_urls if sitemap_url_relevant(url)]
@@ -374,7 +380,7 @@ def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_ur
                 if not (start_dt <= lastmod_local <= end_dt):
                     continue
 
-            key = url.rstrip("/").lower()
+            key = normalize_url(url)
             raw_candidates[key] = candidate_from_url(
                 source,
                 url,
@@ -390,7 +396,7 @@ def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_ur
         status += "/sitemap no recent content candidates"
     else:
         status += f"/sitemap unavailable ({robots_status})"
-    if failures and not raw_candidates:
+    if failures:
         status += f"; failures {len(failures)}"
     if rejected:
         status += f"; rejected {len(rejected)}"
@@ -399,17 +405,26 @@ def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_ur
 
 
 def extract_date_near_anchor(anchor):
-    text_parts = []
+    # Do not borrow an unrelated sibling's date or a listing-wide timestamp.
     for node in [anchor, anchor.parent, anchor.parent.parent if anchor.parent else None]:
-        if node:
-            text_parts.append(node.get_text(" ", strip=True))
-    combined = " ".join(text_parts)
-    parsed = content_extractor.parse_date(combined)
-    return parsed
+        if node is None:
+            continue
+        links = {tag.get("href") for tag in node.find_all("a", href=True)}
+        if len(links) > 1:
+            break
+        times = node.find_all("time")
+        if len(times) == 1:
+            time_tag = times[0]
+            if "modified" in str(time_tag.get("itemprop", "")).lower():
+                continue
+            parsed = content_extractor.parse_date(time_tag.get("datetime") or time_tag.get_text(" ", strip=True))
+            if parsed:
+                return parsed
+    return None
 
 
 def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page=80):
-    start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours)
+    start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours, source["name"])
     base = source_base_url(source)
     index_paths = source.get("index_paths", [])
     raw_candidates = {}
@@ -452,7 +467,7 @@ def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page
                 if not (start_dt <= date_local <= end_dt):
                     continue
 
-            key = url.rstrip("/").lower()
+            key = normalize_url(url)
             if key not in raw_candidates:
                 summary = f"Found on index page: {index_url}"
                 raw_candidates[key] = candidate_from_url(
@@ -474,7 +489,7 @@ def scan_index_pages(source, run_date_str, coverage_hours=48, max_links_per_page
         status += "/index no content candidates"
     else:
         status += "/index not configured"
-    if failures and not raw_candidates:
+    if failures:
         status += f"; failures {len(failures)}"
     if rejected:
         status += f"; rejected {len(rejected)}"
@@ -498,6 +513,7 @@ def merge_candidate(existing, incoming):
         existing["title"] = incoming["title"]
     if incoming.get("published_at") and not existing.get("published_at"):
         existing["published_at"] = incoming["published_at"]
+        existing["date_source"] = incoming.get("date_source", "")
         existing["date"] = incoming.get("date", existing.get("date", ""))
     return existing
 
@@ -517,6 +533,9 @@ def candidate_priority(item):
 
 
 def cap_source_candidates(items):
+    run = scan_runtime.current()
+    if run and items:
+        return run.cap_native(items)
     max_items = max(1, config.MAX_NATIVE_CANDIDATES_PER_SOURCE)
     ordered = sorted(items, key=candidate_priority, reverse=True)
     return ordered[:max_items], max(0, len(ordered) - max_items)
@@ -555,16 +574,21 @@ def discover_native_sources(run_date_str, coverage_hours=48, source_names=None):
 
         local_candidates = {}
         for item in sitemap_items + index_items:
-            key = item["url"].rstrip("/").lower()
+            key = normalize_url(item["url"])
             if key in local_candidates:
                 merge_candidate(local_candidates[key], item)
             else:
                 local_candidates[key] = item
 
+        run = scan_runtime.current()
+        if run:
+            for key, row in run.state["backlog"].items():
+                if row["item"].get("institution") == source["name"]:
+                    local_candidates.setdefault(row["item"]["url"], row["item"])
         capped_items, capped_count = cap_source_candidates(list(local_candidates.values()))
         found_count = 0
         for item in capped_items:
-            key = item["url"].rstrip("/").lower()
+            key = normalize_url(item["url"])
             if key in candidates_by_key:
                 merge_candidate(candidates_by_key[key], item)
             else:

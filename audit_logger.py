@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 import config
+import scan_runtime
 import topic_utils
 
 
@@ -108,13 +109,13 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
     for item in enriched_items or []:
         source = item.get("institution", "Unknown")
         reason = item.get("review_selection_reason", "")
-        if reason.startswith("date_verified_out_of_window") or reason.startswith("low_signal") or reason in {
-            "source_review_cap",
-            "date_unknown_seen_before_skipped",
-        }:
-            skipped_by_source[source] += 1
-        elif reason:
+        selected = item.get("review_selected")
+        if selected is None:  # Compatibility with old audit fixtures only.
+            selected = reason in {"rss_in_window", "date_verified_in_window", "date_uncertain_with_topic_hints_and_text", "date_uncertain_with_topic_hints", "date_poor_source_new_or_changed_sample", "date_unknown_seen_before_content_changed"}
+        if selected:
             selected_by_source[source] += 1
+        else:
+            skipped_by_source[source] += 1
         if not item.get("extracted_text"):
             no_text_by_source[source] += 1
         if item.get("date_status") == "date_unknown":
@@ -156,6 +157,7 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
             {
                 "source": source,
                 "status": status_notes.get(source, "not checked"),
+                "availability": scan_runtime.source_state(status_notes.get(source, "not checked")),
                 "raw_candidates": raw_count,
                 "enriched_candidates": enriched_count,
                 "selected_for_review": selected_by_source.get(source, 0),
@@ -201,7 +203,7 @@ def build_recall_audit(raw_items, enriched_items, status_notes, enrichment_audit
                 "severity": "medium",
                 "area": "Page extraction",
                 "issue": f"{enriched_summary['items_without_extracted_text']} candidates had no extracted page text",
-                "implication": "The LLM had to rely on feed/index metadata or snippets for those candidates.",
+                "implication": "Insufficient evidence is retained for verification and excluded from model review.",
             }
         )
     if enriched_summary["date_status"].get("date_unknown"):
@@ -278,7 +280,7 @@ def build_recall_audit(raw_items, enriched_items, status_notes, enrichment_audit
             if "not checked" in status_lower:
                 severity = "high"
                 implication = "The source was not checked by any configured discovery method."
-            elif any(token in status_lower for token in ["blocked", "403", "failed", "unavailable"]):
+            elif any(token in status_lower for token in ["blocked", "403", "fail", "unavailable"]):
                 severity = "high"
                 implication = "Discovery may be incomplete because the source or fallback path was blocked or unavailable."
             elif "no raw candidates" in status_lower:
@@ -303,6 +305,7 @@ def build_recall_audit(raw_items, enriched_items, status_notes, enrichment_audit
         "native_discovery": native_discovery,
         "review_selection": review_selection,
         "source_health": build_source_health(raw_items, enriched_items, status_notes, enrichment_audit),
+        "run": scan_runtime.current().metadata() if scan_runtime.current() else {},
         "recall_risk_flags": risk_flags,
         "recall_risk_details": risk_details,
     }
@@ -376,6 +379,9 @@ def save_analysis_audit(output_dir, run_date_str, model_slug, analyzed_data):
     audit_dir = os.path.join(output_dir, "audit")
     decisions = {
         "model": model_slug,
+        "run_id": scan_runtime.current().run_id if scan_runtime.current() else "",
+        "analysis_metrics": analyzed_data.get("analysis_metrics", {}),
+        "included": [dict(item, category=category) for category in ("reports", "podcasts", "events") for item in analyzed_data.get(category, [])],
         "included_counts": {
             "reports": len(analyzed_data.get("reports", [])),
             "podcasts": len(analyzed_data.get("podcasts", [])),

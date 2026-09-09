@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import config
+import scan_runtime
 
 
 def format_run_date_for_subject(run_date_str):
@@ -31,6 +32,9 @@ def build_email_subject(run_date_str, model_name=None, summary_counts=None, is_c
     if summary_counts:
         total = sum(int(summary_counts.get(key, 0)) for key in ["reports", "podcasts", "events"])
         total_items = f" - {total} items"
+    run = scan_runtime.current()
+    if run and run.prior_delivered:
+        return f"Think Tank Scan supplement - {date_part}{total_items.replace(" items", " additional items")} - {run.prior_delivered} previously delivered"
     return f"Think Tank Scan - {date_part} - {model_part}{total_items}"
 
 

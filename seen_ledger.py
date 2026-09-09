@@ -2,6 +2,10 @@ import hashlib
 import json
 import os
 import re
+import uuid
+import scan_runtime
+
+from state_storage import atomic_json_write, locked
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -10,11 +14,11 @@ import config
 
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
-LEDGER_VERSION = 2
+LEDGER_VERSION = 3
 
 
 def ledger_path(output_dir):
-    return config.SEEN_LEDGER_PATH
+    return os.path.abspath(config.SEEN_LEDGER_PATH)
 
 
 def ledger_audit_copy_path(output_dir):
@@ -36,14 +40,29 @@ def normalize_url(url):
         if key_lower in TRACKING_QUERY_KEYS or key_lower.startswith(TRACKING_QUERY_PREFIXES):
             continue
         query_pairs.append((key, value))
+    # Sort unique query keys only: repeated-key ordering can be meaningful.
+    if len({key for key, _ in query_pairs}) == len(query_pairs):
+        query_pairs.sort()
     clean_query = urlencode(query_pairs)
-    path = parsed.path.rstrip("/") or parsed.path
+    path = parsed.path.rstrip("/") or "/"
+    # Decode unreserved characters only; encoded slashes retain their meaning.
+    def normalize_escape(match):
+        char = chr(int(match.group(0)[1:], 16))
+        return char if char.isascii() and (char.isalnum() or char in "-._~") else match.group(0).upper()
+    path = re.sub(r"%[0-9a-fA-F]{2}", normalize_escape, path)
+    host = parsed.netloc.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    if (parsed.scheme.lower(), port) in {("http", 80), ("https", 443)}:
+        host = host.rsplit(":", 1)[0]
     return urlunparse(
         (
             parsed.scheme.lower(),
-            parsed.netloc.lower(),
+            host,
             path,
-            "",
+            parsed.params,
             clean_query,
             "",
         )
@@ -93,7 +112,7 @@ def candidate_urls_from_entry(entry):
 def merge_ledger_entries(existing, incoming):
     for field in ["institutions", "titles", "urls"]:
         for value in incoming.get(field) or []:
-            existing[field] = bounded_append(existing.get(field), value)
+            existing[field] = sorted(set(existing.get(field, [])) | {value}) if field == "urls" else bounded_append(existing.get(field), value)
     for field in ["date_status_history", "report_history", "delivery_history"]:
         for value in incoming.get(field) or []:
             existing[field] = bounded_append(existing.get(field), value, limit=20)
@@ -139,8 +158,7 @@ def repair_malformed_url_identities(data):
                 if normalized_value:
                     break
             if not normalized_value:
-                changed = True
-                continue
+                raise ValueError("Ledger contains an unrepairable URL identity; refusing to discard history")
             entry["identity_value"] = normalized_value
             new_key = identity_key("url", normalized_value)
             changed = changed or new_key != key or normalized_value != identity_value
@@ -161,36 +179,96 @@ def repair_malformed_url_identities(data):
     return data
 
 
+def validate_ledger(data):
+    if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+        raise ValueError("Ledger must contain an items object")
+    if int(data.get("version") or 1) > LEDGER_VERSION:
+        raise ValueError("Ledger was written by a newer scanner")
+    for key, entry in data["items"].items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            raise ValueError("Invalid ledger entry")
+        if entry.get("identity_kind") not in {"url", "title"} or not isinstance(entry.get("identity_value"), str):
+            raise ValueError("Invalid ledger identity")
+        for field in ("urls", "institutions", "titles", "report_history", "delivery_history", "date_status_history"):
+            if field in entry and not isinstance(entry[field], list):
+                raise ValueError("Invalid ledger history: " + field)
+    return data
+
+
+@locked
 def load_ledger(output_dir):
     path = ledger_path(output_dir)
     if not os.path.exists(path):
+        if os.path.exists(path + ".bak") or os.path.exists(ledger_audit_copy_path(output_dir)):
+            raise RuntimeError("Seen ledger is missing but historical state exists. Restore it before scanning: " + path)
         return empty_ledger()
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except Exception:
-        return empty_ledger()
-    if not isinstance(data, dict):
-        return empty_ledger()
-    data["version"] = max(int(data.get("version") or 1), LEDGER_VERSION)
-    data.setdefault("items", {})
+            data = validate_ledger(json.load(handle))
+    except Exception as exc:
+        raise RuntimeError("Cannot read seen ledger; refusing to forget report history. Restore a validated backup: " + path) from exc
+    data["version"] = LEDGER_VERSION
     data.setdefault("backfill", {})
-    return repair_malformed_url_identities(data)
+    data = repair_malformed_url_identities(data)
+    return coalesce_alias_entries(data)
 
 
+@locked
 def save_ledger(output_dir, ledger):
+    validate_ledger(ledger)
     path = ledger_path(output_dir)
-    path_dir = os.path.dirname(path)
-    if path_dir:
-        os.makedirs(path_dir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(ledger, handle, indent=2, ensure_ascii=False)
+    if os.path.exists(path):
+        # Never overwrite corrupt state or its last good backup.
+        with open(path, "r", encoding="utf-8") as handle:
+            previous = validate_ledger(json.load(handle))
+        atomic_json_write(path + ".bak", previous)
+    atomic_json_write(path, ledger)
+    if not os.path.exists(path + ".bak"):
+        atomic_json_write(path + ".bak", ledger)
     audit_copy = ledger_audit_copy_path(output_dir)
-    if os.path.abspath(audit_copy) != os.path.abspath(path):
-        os.makedirs(os.path.dirname(audit_copy), exist_ok=True)
-        with open(audit_copy, "w", encoding="utf-8") as handle:
-            json.dump(ledger, handle, indent=2, ensure_ascii=False)
+    if os.path.abspath(audit_copy) != path:
+        atomic_json_write(audit_copy, ledger)
     return path
+
+
+def item_urls(item):
+    # Aliases are observed request, redirect and publisher canonical URLs.
+    return {url for value in [item.get("url"), item.get("canonical_url"), item.get("resolved_url")]
+            if (url := normalize_url(value))}
+
+
+def lookup_item_key(entries, item):
+    key = item.get("seen_item_key")
+    if key in entries:
+        return key
+    urls = item_urls(item)
+    key = identity_key(*item_identity(item))
+    if key in entries:
+        return key
+    for existing_key, entry in entries.items():
+        aliases = {normalize_url(value) for value in candidate_urls_from_entry(entry)}
+        if urls & aliases:
+            return existing_key
+    return key
+
+
+def coalesce_alias_entries(ledger):
+    entries = ledger["items"]
+    aliases = {}
+    for key in list(entries):
+        if key not in entries:
+            continue
+        entry = entries[key]
+        urls = {normalize_url(value) for value in candidate_urls_from_entry(entry)} - {""}
+        matches = {aliases[url] for url in urls if url in aliases and aliases[url] in entries}
+        for other in matches - {key}:
+            merge_ledger_entries(entry, entries.pop(other))
+            for url, owner in list(aliases.items()):
+                if owner == other:
+                    aliases[url] = key
+        for url in urls:
+            aliases[url] = key
+    return ledger
 
 
 def bounded_append(values, value, limit=12):
@@ -283,6 +361,7 @@ def new_entry(item, identity_kind, identity_value, run_date_str):
     }
 
 
+@locked
 def annotate_items_with_seen_metadata(items, output_dir, run_date_str):
     """
     Adds persistent first-seen/date cross-check metadata to candidates and
@@ -291,6 +370,7 @@ def annotate_items_with_seen_metadata(items, output_dir, run_date_str):
     ledger = load_ledger(output_dir)
     items_by_key = ledger.setdefault("items", {})
     preexisting_keys = set(items_by_key.keys())
+    scan_run_id = scan_runtime.current().run_id if scan_runtime.current() else uuid.uuid4().hex
     updated_this_run = set()
     new_count = 0
     seen_before_count = 0
@@ -298,7 +378,7 @@ def annotate_items_with_seen_metadata(items, output_dir, run_date_str):
 
     for item in items:
         identity_kind, identity_value = item_identity(item)
-        key = identity_key(identity_kind, identity_value)
+        key = lookup_item_key(items_by_key, item)
         entry = items_by_key.get(key)
         was_seen_before = key in preexisting_keys
         if entry is None:
@@ -323,6 +403,7 @@ def annotate_items_with_seen_metadata(items, output_dir, run_date_str):
         if content_changed:
             date_crosscheck_counts["content_hash_changed"] = date_crosscheck_counts.get("content_hash_changed", 0) + 1
 
+        item["scan_run_id"] = scan_run_id
         item["seen_item_key"] = key
         item["seen_identity_kind"] = identity_kind
         item["seen_identity_value"] = identity_value
@@ -347,7 +428,7 @@ def annotate_items_with_seen_metadata(items, output_dir, run_date_str):
 
         entry["institutions"] = bounded_append(entry.get("institutions"), item.get("institution"))
         entry["titles"] = bounded_append(entry.get("titles"), item.get("title") or item.get("extracted_title"))
-        entry["urls"] = bounded_append(entry.get("urls"), item.get("canonical_url") or item.get("url"))
+        entry["urls"] = sorted(set(entry.get("urls", [])) | item_urls(item))
         entry["last_seen_run_date"] = run_date_str
         entry["last_seen_at"] = datetime.utcnow().isoformat() + "Z"
 
@@ -386,16 +467,14 @@ def iter_included_items(analyzed_data):
             yield category, item
 
 
+@locked
 def mark_reported_items(output_dir, run_date_str, model_slug, analyzed_data):
     ledger = load_ledger(output_dir)
     items_by_key = ledger.setdefault("items", {})
     reported_count = 0
 
     for category, item in iter_included_items(analyzed_data):
-        key = item.get("seen_item_key")
-        if not key:
-            identity_kind, identity_value = item_identity(item)
-            key = identity_key(identity_kind, identity_value)
+        key = lookup_item_key(items_by_key, item)
         entry = items_by_key.get(key)
         if entry is None:
             identity_kind, identity_value = item_identity(item)
@@ -412,6 +491,7 @@ def mark_reported_items(output_dir, run_date_str, model_slug, analyzed_data):
         }
         entry["report_history"] = bounded_append(entry.get("report_history"), report_record, limit=20)
         entry["last_reported_run_date"] = run_date_str
+        entry["last_reported_run_id"] = item.get("scan_run_id", "")
         reported_count += 1
 
     path = save_ledger(output_dir, ledger)
@@ -422,16 +502,14 @@ def mark_reported_items(output_dir, run_date_str, model_slug, analyzed_data):
     }
 
 
+@locked
 def mark_delivery_items(output_dir, run_date_str, model_slug, analyzed_data, delivery_status="emailed"):
     ledger = load_ledger(output_dir)
     items_by_key = ledger.setdefault("items", {})
     delivered_count = 0
 
     for category, item in iter_included_items(analyzed_data):
-        key = item.get("seen_item_key")
-        if not key:
-            identity_kind, identity_value = item_identity(item)
-            key = identity_key(identity_kind, identity_value)
+        key = lookup_item_key(items_by_key, item)
         entry = items_by_key.get(key)
         if entry is None:
             identity_kind, identity_value = item_identity(item)
@@ -464,7 +542,9 @@ def run_date_from_enriched_filename(path):
     return match.group(1) if match else ""
 
 
+@locked
 def backfill_seen_ledger_from_audits(output_dir, audit_dir=None):
+    explicit_audit_dir = audit_dir
     audit_dir = audit_dir or os.path.join(output_dir, "audit")
     ledger = load_ledger(output_dir)
     items_by_key = ledger.setdefault("items", {})
@@ -475,6 +555,11 @@ def backfill_seen_ledger_from_audits(output_dir, audit_dir=None):
             for name in os.listdir(audit_dir)
             if re.match(r"enriched_candidates_\d{4}-\d{2}-\d{2}\.jsonl$", name)
         )
+
+    if not explicit_audit_dir:
+        from pathlib import Path
+        files.extend(str(p) for p in Path(output_dir, "runs").glob("*/audit/enriched_candidates_*.jsonl"))
+        files = sorted(set(files), key=lambda p: (run_date_from_enriched_filename(p), p))
 
     created = 0
     updated = 0
@@ -521,7 +606,7 @@ def backfill_seen_ledger_from_audits(output_dir, audit_dir=None):
                 entry["last_seen_run_date"] = max(entry.get("last_seen_run_date", run_date_str), run_date_str)
                 entry["institutions"] = bounded_append(entry.get("institutions"), item.get("institution"))
                 entry["titles"] = bounded_append(entry.get("titles"), item.get("title") or item.get("extracted_title"))
-                entry["urls"] = bounded_append(entry.get("urls"), item.get("canonical_url") or item.get("url"))
+                entry["urls"] = sorted(set(entry.get("urls", [])) | item_urls(item))
 
     ledger["backfill"] = {
         "completed_at": datetime.utcnow().isoformat() + "Z",

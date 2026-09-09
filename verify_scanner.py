@@ -21,7 +21,17 @@ import seen_ledger
 import main
 from reportlab.pdfgen import canvas
 
+_verification_failures = []
+
+
+def verification_print(*args, **kwargs):
+    print(*args, **kwargs)
+    if any("[FAIL]" in str(arg) for arg in args):
+        _verification_failures.append(" ".join(map(str, args)))
+
+
 def run_verification():
+    _verification_failures.clear()
     print("=== STARTING SCANNER VERIFICATION ===")
     verify_output_dir = os.environ.get(
         "SCANNER_VERIFY_OUTPUT_DIR",
@@ -44,7 +54,7 @@ def run_verification():
         print(f"  Coverage Start Time: {start_dt.isoformat()}")
         print("  [PASS] Timezone math verified.")
     except Exception as e:
-        print(f"  [FAIL] Timezone math failed: {e}")
+        verification_print(f"  [FAIL] Timezone math failed: {e}")
         
     # Test 2: RSS Date parsing
     print("\n[Test 2] RSS Date string parser tests:")
@@ -57,12 +67,12 @@ def run_verification():
     if dt1 and dt1.strftime("%Y-%m-%d") == "2026-06-14":
         print(f"  Parsed RFC 822 successfully: {dt1.isoformat()}")
     else:
-        print(f"  [FAIL] Parsing RFC 822 failed: {dt1}")
+        verification_print(f"  [FAIL] Parsing RFC 822 failed: {dt1}")
         
     if dt2 and dt2.strftime("%Y-%m-%d") == "2026-06-14":
         print(f"  Parsed ISO 8601 successfully: {dt2.isoformat()}")
     else:
-        print(f"  [FAIL] Parsing ISO 8601 failed: {dt2}")
+        verification_print(f"  [FAIL] Parsing ISO 8601 failed: {dt2}")
         
     # Test 3: Deduplication logic
     print("\n[Test 3] Deduplication check:")
@@ -87,7 +97,7 @@ def run_verification():
     ):
         print("  [PASS] Deduplication logic verified (URL first, source-scoped high-signal title fallback).")
     else:
-        print(f"  [FAIL] Deduplication logic failed: {deduped}")
+        verification_print(f"  [FAIL] Deduplication logic failed: {deduped}")
 
     print("\n[Test 3c] Canonical URL validation and malformed dedupe fallback:")
     fallback_url = "https://www.rusi.org/explore-our-research/publications/research-papers/one"
@@ -146,7 +156,7 @@ def run_verification():
     ):
         print("  [PASS] Malformed canonical URLs fall back to item URLs without collapsing reports.")
     else:
-        print(
+        verification_print(
             "  [FAIL] Canonical fallback failed: "
             f"fallback={canonical_fallback}, relative={canonical_relative}, "
             f"deduped={len(rusi_deduped)}, identities={rusi_identity_values}, repaired={repaired_values}"
@@ -161,7 +171,7 @@ def run_verification():
     if not csis_in_rss and csis_native and not orf_active:
         print("  [PASS] ORF disabled by default and CSIS uses native homepage discovery.")
     else:
-        print(
+        verification_print(
             "  [FAIL] Source config override failed: "
             f"csis_in_rss={csis_in_rss}, csis_native={csis_native}, orf_active={orf_active}"
         )
@@ -202,7 +212,7 @@ def run_verification():
     ):
         print("  [PASS] Extraction and topic hinting verified.")
     else:
-        print(f"  [FAIL] Extraction/topic hinting failed: text={extracted_text[:80]!r}, hints={hint_topics}")
+        verification_print(f"  [FAIL] Extraction/topic hinting failed: text={extracted_text[:80]!r}, hints={hint_topics}")
 
     structured_html = """
     <html>
@@ -223,7 +233,7 @@ def run_verification():
     if "resilient semiconductor supply chains" in structured_text.lower():
         print("  [PASS] Structured article body extraction fallback verified.")
     else:
-        print(f"  [FAIL] Structured extraction fallback failed: {structured_text[:100]!r}")
+        verification_print(f"  [FAIL] Structured extraction fallback failed: {structured_text[:100]!r}")
 
     # Test 5: Sitemap parsing and native candidate creation
     print("\n[Test 5] Sitemap parsing and native candidate creation:")
@@ -268,7 +278,10 @@ def run_verification():
         not nested
         and len(urls) == 2
         and candidate["discovery_methods"] == ["sitemap"]
-        and candidate["date"] == "14 June 2026"
+        and candidate["date"] == ""
+        and candidate["published_at"] is None
+        and candidate["modified_date_source"] == "sitemap_lastmod"
+        and candidate["modified_at"].startswith("2026-06-14")
         and sitemap_xml_rejected == "native_rejected_sitemap_xml"
         and nav_title_rejected == "native_rejected_navigation_title"
         and listing_rejected == "native_rejected_listing_page"
@@ -276,7 +289,7 @@ def run_verification():
     ):
         print("  [PASS] Sitemap parsing and native candidate creation verified.")
     else:
-        print(f"  [FAIL] Sitemap parsing failed: nested={nested}, urls={urls}, candidate={candidate}")
+        verification_print(f"  [FAIL] Sitemap parsing failed: nested={nested}, urls={urls}, candidate={candidate}")
 
     print("\n[Test 5b] RSS failure native discovery fallback:")
     old_fetch_rss = rss_parser.fetch_rss_items
@@ -321,7 +334,7 @@ def run_verification():
         if fallback_ok:
             print("  [PASS] RSS failure triggers source-native fallback discovery.")
         else:
-            print(
+            verification_print(
                 "  [FAIL] RSS fallback failed: "
                 f"items={fallback_items}, status={fallback_status}, captured={captured_native_names}, audit={fallback_audit}"
             )
@@ -430,14 +443,14 @@ def run_verification():
         if cache_ok and pdf_ok and health_ok and subject_ok:
             print("  [PASS] v4 enrichment/reporting helpers verified.")
         else:
-            print(
+            verification_print(
                 "  [FAIL] v4 helper checks failed: "
                 f"cache_ok={cache_ok}, pdf_ok={pdf_ok}, health_ok={health_ok}, subject_ok={subject_ok}"
             )
         config.ENRICHMENT_CACHE_DIR = old_cache_dir
         config.ENABLE_ENRICHMENT_CACHE = old_cache_enabled
     except Exception as e:
-        print(f"  [FAIL] v4 helper checks failed: {e}")
+        verification_print(f"  [FAIL] v4 helper checks failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -485,14 +498,14 @@ def run_verification():
         if ledger_ok:
             print("  [PASS] First-seen ledger and stale undated filtering verified.")
         else:
-            print(
+            verification_print(
                 "  [FAIL] First-seen ledger failed: "
                 f"first={first_seen_audit}, second={second_seen_audit}, "
                 f"item={second_run_items[0]}, selection={selection_reason}, should_review={should_review}"
             )
         config.SEEN_LEDGER_PATH = old_ledger_path
     except Exception as e:
-        print(f"  [FAIL] First-seen ledger check failed: {e}")
+        verification_print(f"  [FAIL] First-seen ledger check failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -561,14 +574,14 @@ def run_verification():
         if v5_ok:
             print("  [PASS] v5 ledger backfill, content-change selection, and render/report ordering verified.")
         else:
-            print(
+            verification_print(
                 "  [FAIL] v5 ledger checks failed: "
                 f"backfill={backfill}, changed_audit={changed_audit}, item={changed_items_second[0]}, "
                 f"reason={changed_reason}, should_review={should_review_changed}, render_before_reported={render_before_reported}"
             )
         config.SEEN_LEDGER_PATH = old_ledger_path
     except Exception as e:
-        print(f"  [FAIL] v5 ledger/backfill check failed: {e}")
+        verification_print(f"  [FAIL] v5 ledger/backfill check failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -608,9 +621,9 @@ def run_verification():
         if sample_ok:
             print("  [PASS] Date-poor sources send a bounded new-item sample to model review.")
         else:
-            print(f"  [FAIL] Date-poor sampling failed: sampled={sampled}, audit={sample_audit}")
+            verification_print(f"  [FAIL] Date-poor sampling failed: sampled={sampled}, audit={sample_audit}")
     except Exception as e:
-        print(f"  [FAIL] Date-poor sampling check failed: {e}")
+        verification_print(f"  [FAIL] Date-poor sampling check failed: {e}")
         import traceback
         traceback.print_exc()
     finally:
@@ -766,7 +779,7 @@ def run_verification():
         if "## Scan Quality" in md_content and "source-native sitemaps" in md_content and "Scan Quality" in html_content and markings_removed:
             print("  [PASS] Report layout generation verified successfully.")
         else:
-            print("  [FAIL] Report layout missing scan quality, methodology, or marking removal.")
+            verification_print("  [FAIL] Report layout missing scan quality, methodology, or marking removal.")
         
         # Test 10: Comparison report layout rendering
         print("\n[Test 10] Comparison report layout rendering verification:")
@@ -795,11 +808,13 @@ def run_verification():
         print("  [PASS] Comparison layout generation verified successfully.")
         
     except Exception as e:
-        print(f"  [FAIL] Layout generation failed: {e}")
+        verification_print(f"  [FAIL] Layout generation failed: {e}")
         import traceback
         traceback.print_exc()
         
     print("\n=== VERIFICATION COMPLETED ===")
+    if _verification_failures:
+        raise SystemExit(1)
 
 def timedelta_stub(hours):
     from datetime import timedelta

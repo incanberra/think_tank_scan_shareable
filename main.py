@@ -6,6 +6,10 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import eligibility
+import scan_runtime
+from state_storage import locked
+
 import analyzer
 import audit_logger
 import candidate_selector
@@ -126,6 +130,9 @@ def parse_args():
         action="store_true",
         help="Backfill the persistent first-seen ledger from historical enriched candidate audits, then exit",
     )
+    parser.add_argument("--as-of", help="Coverage end: now, or an ISO-8601 timestamp with timezone")
+    parser.add_argument("--reprocess", action="store_true", help="Bypass relevance-decision cache; previously reported items stay excluded")
+    parser.add_argument("--retry-pending", action="store_true", help="Retry pending and paused verification cases now")
     return parser.parse_args()
 
 
@@ -198,6 +205,10 @@ def stage_discover(run_date_str):
         native_note = status_notes.get(source)
         status_notes[source] = f"{native_note}; DDG {status}" if native_note else status
 
+    run = scan_runtime.current()
+    if run:
+        raw_candidates = run.prepare_candidates(raw_candidates)
+        run.status_notes = status_notes
     print(f"[*] Total raw candidates discovered from all sources: {len(raw_candidates)}")
     discovery_audit = {"native_discovery": merge_native_discovery_audits(native_audit, native_fallback_audit)}
     return raw_candidates, status_notes, discovery_audit
@@ -238,6 +249,8 @@ def stage_enrich_select_and_audit(raw_candidates, status_notes, discovery_audit,
     )
     review_candidates, review_selection_audit = candidate_selector.select_candidates_for_review(all_candidates)
     enrichment_audit["review_selection"] = review_selection_audit
+    if scan_runtime.current():
+        scan_runtime.current().record_selection(all_candidates)
 
     print(
         f"[*] Selected {len(review_candidates)} of {len(all_candidates)} enriched candidates for LLM review "
@@ -299,6 +312,16 @@ def map_item_for_json(item):
         "url": item["url"],
     }
     optional_fields = [
+        "publication_date_source_detail",
+        "evidence_quality",
+        "decision_cache_status",
+        "scan_run_id",
+        "date_source",
+        "published_at_verified",
+        "modified_at",
+        "modified_date_source",
+        "event_start_at",
+        "event_end_at",
         "relevance_confidence",
         "evidence",
         "date_status",
@@ -340,6 +363,8 @@ def build_clean_json_data(
     recall_audit = audit_paths["recall_audit"]
     return {
         "run_date": run_date_str,
+        "run": scan_runtime.current().metadata() if scan_runtime.current() else {},
+        "analysis_metrics": analyzed_data.get("analysis_metrics", {}),
         "coverage_window": f"{config.COVERAGE_WINDOW_HOURS} hours",
         "reports": [map_item_for_json(item) for item in analyzed_data["reports"]],
         "events": [map_item_for_json(item) for item in analyzed_data["events"]],
@@ -376,6 +401,7 @@ def render_model_outputs(
     source_health_paths,
     write_standard_copies=False,
 ):
+    eligibility.filter_for_publication(analyzed_data, output_dir, run_date_str)
     clean_json_data = build_clean_json_data(
         analyzed_data,
         run_date_str,
@@ -473,6 +499,9 @@ def stage_analyze_and_render(
         print_stage(4, f"Analyze candidates with {model}")
         model_slug = slugify_model_name(model)
         analyzed_data = analyzer.analyze_items(review_candidates, override_model=model)
+        analyzed_data = eligibility.filter_for_publication(analyzed_data, output_dir, run_date_str)
+        if scan_runtime.current():
+            scan_runtime.current().record_analysis(analyzed_data)
         results_by_model[model] = analyzed_data
         analysis_audit_path = audit_logger.save_analysis_audit(
             output_dir,
@@ -606,49 +635,51 @@ def print_summary(run_date_str, models_to_run, results_by_model, audit_paths, ou
     print("==============================\n")
 
 
+@locked
 def main():
     args = parse_args()
     run_date_str = resolve_run_date(args)
-
     if args.backfill_seen_ledger:
         os.makedirs(args.output_dir, exist_ok=True)
-        backfill_audit = seen_ledger.backfill_seen_ledger_from_audits(args.output_dir)
-        print("[+] Backfilled seen ledger from enriched candidate audits.")
-        print(json.dumps(backfill_audit, indent=2))
+        print(json.dumps(seen_ledger.backfill_seen_ledger_from_audits(args.output_dir), indent=2))
         return
-
-    print(f"[*] Starting scan for run date: {run_date_str}")
-    print("[*] Daily run time interpreted as: 3:00 AM Canberra time (Australia/Sydney)")
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    raw_candidates, status_notes, discovery_audit = stage_discover(run_date_str)
-    all_candidates, review_candidates, enrichment_audit, audit_paths = stage_enrich_select_and_audit(
-        raw_candidates,
-        status_notes,
-        discovery_audit,
-        args.output_dir,
-        run_date_str,
-        args.skip_enrichment,
-    )
-    models_to_run = resolve_models(args)
-    if not models_to_run:
-        print("[!] Error: No models selected.")
-        sys.exit(1)
-
-    results_by_model, rendered_by_model = stage_analyze_and_render(
-        models_to_run,
-        review_candidates,
-        raw_candidates,
-        all_candidates,
-        status_notes,
-        enrichment_audit,
-        audit_paths,
-        args.output_dir,
-        run_date_str,
-    )
-    comparison_html = stage_generate_comparison(results_by_model, args.output_dir, run_date_str)
-    email_sent = stage_email(args, run_date_str, models_to_run, results_by_model, rendered_by_model, comparison_html)
-    print_summary(run_date_str, models_to_run, results_by_model, audit_paths, args.output_dir, email_sent)
+    cutoff = None
+    if args.as_of:
+        if args.as_of == "now":
+            cutoff = datetime.now(ZoneInfo(config.TIMEZONE_CANBERRA))
+        else:
+            cutoff = datetime.fromisoformat(args.as_of)
+            if cutoff.tzinfo is None:
+                raise ValueError("--as-of must include a timezone, or use now")
+            cutoff = cutoff.astimezone(ZoneInfo(config.TIMEZONE_CANBERRA))
+        run_date_str = cutoff.strftime("%Y-%m-%d")
+    run = scan_runtime.ScanRun(args.output_dir, run_date_str, cutoff=cutoff,
+                               reprocess=args.reprocess, retry_pending=args.retry_pending,
+                               historical=bool(args.date))
+    args.output_dir = str(run.output_dir)
+    with scan_runtime.activate(run):
+        print(f"[*] Starting scan {run.run_id} for {run_date_str}")
+        print(f"[*] Coverage ends {run.cutoff.isoformat()}; output: {run.output_dir}")
+        with run.stage("discovery"):
+            raw_candidates, status_notes, discovery_audit = stage_discover(run_date_str)
+        with run.stage("enrichment_and_selection"):
+            all_candidates, review_candidates, enrichment_audit, audit_paths = stage_enrich_select_and_audit(
+                raw_candidates, status_notes, discovery_audit, args.output_dir, run_date_str, args.skip_enrichment)
+        models_to_run = resolve_models(args)
+        if not models_to_run:
+            raise ValueError("No models selected")
+        run.models = models_to_run
+        with run.stage("analysis_and_rendering"):
+            results_by_model, rendered_by_model = stage_analyze_and_render(
+                models_to_run, review_candidates, raw_candidates, all_candidates, status_notes,
+                enrichment_audit, audit_paths, args.output_dir, run_date_str)
+            comparison_html = stage_generate_comparison(results_by_model, args.output_dir, run_date_str)
+        with run.stage("email"):
+            email_sent = stage_email(args, run_date_str, models_to_run, results_by_model, rendered_by_model, comparison_html)
+        if not args.no_email and not email_sent:
+            raise RuntimeError("Reports were saved, but email delivery failed")
+        run.finish(email_sent)
+        print_summary(run_date_str, models_to_run, results_by_model, audit_paths, args.output_dir, email_sent)
 
 
 if __name__ == "__main__":

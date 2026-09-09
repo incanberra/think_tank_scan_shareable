@@ -11,36 +11,10 @@ TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
 
 
-def normalize_url(url):
-    """
-    Normalizes URLs for deduplication without destroying meaningful paths.
-    """
-    if not url:
-        return ""
-    parsed = urlparse(str(url).strip())
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return ""
-    remainder = f"{parsed.netloc}{parsed.path}".lower()
-    if "http://" in remainder or "https://" in remainder or parsed.netloc.lower().endswith(("http:", "https:")):
-        return ""
-    query_pairs = []
-    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-        key_lower = key.lower()
-        if key_lower in TRACKING_QUERY_KEYS or key_lower.startswith(TRACKING_QUERY_PREFIXES):
-            continue
-        query_pairs.append((key, value))
-    clean_query = urlencode(query_pairs)
-    path = parsed.path.rstrip("/") or parsed.path
-    return urlunparse(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            path,
-            "",
-            clean_query,
-            "",
-        )
-    )
+from seen_ledger import normalize_url
+import eligibility
+import scan_runtime
+import evidence_selection
 
 
 def normalize_title(title):
@@ -98,6 +72,12 @@ def merge_duplicate_item(existing, incoming):
         "extracted_title",
         "extracted_author",
         "extracted_date",
+        "scan_run_id",
+        "scan_run_date",
+        "date_source",
+        "published_at_verified",
+        "event_start_at",
+        "event_start_precision",
         "seen_item_key",
         "seen_status",
         "first_seen_run_date",
@@ -219,7 +199,9 @@ def compact_item_for_prompt(item, idx):
         "discovery_methods": item.get("discovery_methods") or [item.get("discovery_method", "unknown")],
         "topic_hints": topic_hints,
         "source_summary": item.get("summary") or item.get("raw_summary") or "",
-        "full_text_excerpt": text[: config.LLM_ITEM_TEXT_CHAR_LIMIT],
+        "full_text_excerpt": evidence_selection.excerpt(text),
+        "evidence_quality": item.get("evidence_quality", "unknown"),
+        "event_start_at": item.get("event_start_at", ""),
     }
 
 
@@ -239,17 +221,19 @@ For EACH candidate, decide whether it is materially relevant to at least one top
 
 Rules:
 1. Prefer recall when the evidence clearly relates to the ontology, but reject passing mentions, generic geopolitics, routine macro commentary, and items with no material economic-security angle.
-2. If extraction_status is not "ok", judge from available metadata but set relevance_confidence to "low" unless the relevance is obvious.
-3. If date_status is "verified_out_of_window", usually reject it for the daily report unless it is an upcoming event or the evidence shows the relevant publication/announcement date is actually in scope.
-4. If date_status is "date_unknown", do not reject only for that reason; flag the uncertainty in date_note.
-5. Use first_seen_run_date and date_crosscheck_status as a date sanity check. If an item has date_unknown_seen_before, treat it as probably stale unless other evidence shows a fresh publication, update, or upcoming event.
+2. If evidence is insufficient to establish relevance, set needs_review to true rather than guessing or rejecting from a title alone.
+3. Never override publication dates or prior-report history. Modification timestamps are not publication dates. Only events with a verified future event_start_at are eligible outside the publication window.
+4. Undated publications may be assessed for relevance, but are held for review and cannot appear as new publications. Do not invent dates.
+5. First-seen dates are discovery timestamps, not publication dates. Do not treat an unresolved date as a relevance rejection; date eligibility is enforced separately.
 6. Every included item must have 1-3 short evidence strings copied or closely paraphrased from the title, summary, or full text. Evidence should explain why it matched the topic set.
 7. Summaries must be 2-4 sentences and grounded in the evidence packet. Do not invent details that are not supported by the packet.
 
-Return raw JSON only, with exactly one analysis for every input item in the same order:
+Return raw JSON only, with exactly one analysis for every input item. Copy each input temp_id into its result. Order is not significant:
 {{
   "analyses": [
     {{
+      "temp_id": 0,
+      "needs_review": false,
       "is_material_match": true,
       "title": "Cleaned title",
       "author": "Author(s) or speakers, or N/A",
@@ -303,6 +287,9 @@ def make_final_item(orig_item, analysis):
         "discovery_methods": orig_item.get("discovery_methods") or [orig_item.get("discovery_method", "unknown")],
         "topic_hints": orig_item.get("topic_hints", []),
     }
+    for field in ("scan_run_id", "scan_run_date", "date_source", "published_at_verified", "modified_at", "modified_date_source", "event_start_at", "event_end_at", "event_start_precision", "is_listing_page", "item_type", "content_type_guess", "last_emailed_run_date", "resolved_url", "canonical_url", "evidence_quality", "publication_date_source_detail", "decision_cache_status"):
+        if field in orig_item:
+            final_item[field] = orig_item[field]
     if analysis.get("event_time"):
         final_item["event_time"] = analysis["event_time"]
     return final_item
@@ -335,12 +322,20 @@ def make_exclusion_item(orig_item, analysis, reason_prefix=""):
 
 
 def add_item_to_category(analyzed_data, item, category):
+    checked = dict(item)
+    if category == "event":
+        checked["item_type"] = "event"
+    blocked = eligibility.exclusion_reason(checked, require_publication=True)
+    if blocked:
+        analyzed_data.setdefault("needs_review", []).append(dict(item, exclusion_reason=blocked))
+        return False
     if category == "event":
         analyzed_data["events"].append(item)
     elif category == "podcast":
         analyzed_data["podcasts"].append(item)
     else:
         analyzed_data["reports"].append(item)
+    return True
 
 
 def analyze_without_api(items):
@@ -370,101 +365,86 @@ def analyze_without_api(items):
 
 
 def analyze_items(items, override_model=None):
-    """
-    Performs evidence-backed LLM relevance review over enriched candidates.
-    """
-    if not config.OPENROUTER_API_KEY:
-        return analyze_without_api(items)
-
+    """Review sufficient evidence; cache decisions and match responses by ID."""
     model = ai_client.get_openrouter_model(override_model)
+    run = scan_runtime.current()
     unique_items = deduplicate_items(topic_utils.annotate_topic_hints(items))
-    print(f"[*] Deduplicated candidate items from {len(items)} down to {len(unique_items)}.")
+    data = {key: [] for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
+    metrics = {"selected_candidates": len(items), "unique_candidates": len(unique_items),
+               "cache_hits": 0, "sent_to_model": 0, "insufficient_evidence": 0}
+    uncached = []
 
-    analyzed_data = {
-        "reports": [],
-        "events": [],
-        "podcasts": [],
-        "excluded": [],
-        "needs_review": [],
-    }
+    def apply(item, analysis):
+        if analysis.get("needs_review"):
+            data["needs_review"].append(make_exclusion_item(item, analysis, "insufficient_evidence"))
+            return
+        if not analysis["is_material_match"]:
+            data["excluded"].append(make_exclusion_item(item, analysis))
+            return
+        category = analysis.get("category") or item.get("item_type") or "report"
+        category = category if category in ("report", "event", "podcast") else "report"
+        add_item_to_category(data, make_final_item(item, analysis), category)
 
-    if not unique_items:
-        return analyzed_data
+    for item in unique_items:
+        if item.get("evidence_quality") == "insufficient":
+            data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "insufficient_evidence"}))
+            metrics["insufficient_evidence"] += 1
+            continue
+        cached = run.get_decision(item, model) if run else None
+        if cached:
+            item["decision_cache_status"] = "hit"
+            metrics["cache_hits"] += 1
+            apply(item, cached)
+        else:
+            uncached.append(item)
+
+    if not config.OPENROUTER_API_KEY:
+        for item in uncached:
+            data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_review_failed: no API key configured"}))
+        data["analysis_metrics"] = metrics
+        return data
 
     batch_size = max(1, config.LLM_BATCH_SIZE)
-    batches = [unique_items[i : i + batch_size] for i in range(0, len(unique_items), batch_size)]
-
-    for batch_idx, batch in enumerate(batches):
-        print(f"[*] Reviewing relevance batch {batch_idx + 1}/{len(batches)} (contains {len(batch)} items)...")
-        prompt = build_analysis_prompt(batch)
-
+    batches = [uncached[i:i + batch_size] for i in range(0, len(uncached), batch_size)]
+    for batch_index, batch in enumerate(batches):
+        print(f"[*] Reviewing relevance batch {batch_index + 1}/{len(batches)} ({len(batch)} candidates)...")
+        metrics["sent_to_model"] += len(batch)
+        before_batch = {key: len(data[key]) for key in data}
         try:
-            print(f"    [+] Querying OpenRouter model: {model}...")
-            result_data = ai_client.generate_json_with_retry(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            analyses = result_data.get("analyses", []) if isinstance(result_data, dict) else result_data
-            if isinstance(analyses, dict):
-                analyses = [analyses]
-            if not isinstance(analyses, list):
-                analyses = []
-
-            included = 0
-            excluded = 0
-            review = 0
-
-            for idx, orig_item in enumerate(batch):
-                if idx >= len(analyses) or not isinstance(analyses[idx], dict):
-                    analyzed_data["needs_review"].append(
-                        make_exclusion_item(
-                            orig_item,
-                            {"exclusion_reason": "Model did not return a parseable decision for this candidate."},
-                        )
-                    )
-                    review += 1
+            result = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt(batch)}])
+            analyses = result.get("analyses", []) if isinstance(result, dict) else result
+            by_id = {}
+            duplicate_ids = set()
+            for row in analyses if isinstance(analyses, list) else []:
+                if not isinstance(row, dict):
                     continue
-
-                analysis = analyses[idx]
-                category = analysis.get("category") or orig_item.get("content_type_guess") or orig_item.get("item_type") or "report"
-                if category not in ["report", "event", "podcast"]:
-                    category = "report"
-
-                if analysis.get("is_material_match", False):
-                    final_item = make_final_item(orig_item, analysis)
-                    if final_item.get("date_status") == "verified_out_of_window" and category != "event":
-                        analyzed_data["needs_review"].append(
-                            make_exclusion_item(
-                                orig_item,
-                                analysis,
-                                reason_prefix="Material match but outside coverage window",
-                            )
-                        )
-                        review += 1
-                    else:
-                        add_item_to_category(analyzed_data, final_item, category)
-                        included += 1
-                else:
-                    analyzed_data["excluded"].append(make_exclusion_item(orig_item, analysis))
-                    excluded += 1
-
-            print(f"    [+] Batch complete: {included} included, {excluded} excluded, {review} queued for review.")
-
-            if batch_idx < len(batches) - 1:
-                print("    [*] Spacing delay: sleeping 2 seconds before next batch...")
-                time.sleep(2)
-
+                index = row.get("temp_id")
+                if type(index) is not int or index < 0 or index >= len(batch):
+                    continue
+                if index in by_id:
+                    duplicate_ids.add(index)
+                by_id[index] = row
+            for index, item in enumerate(batch):
+                row = by_id.get(index)
+                valid = (row and index not in duplicate_ids and type(row.get("is_material_match")) is bool
+                         and type(row.get("needs_review", False)) is bool
+                         and (not row.get("is_material_match") or isinstance(row.get("evidence"), list) and bool(row["evidence"])))
+                if not valid:
+                    data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_response_invalid: missing, duplicate or invalid candidate decision"}))
+                    continue
+                item["decision_cache_status"] = "miss"
+                if run and not row.get("needs_review"):
+                    run.cache_decision(item, model, row)
+                apply(item, row)
         except Exception as exc:
-            print(f"    [-] Failed to analyze batch {batch_idx + 1}: {exc}")
+            for key, count in before_batch.items():
+                del data[key][count:]
             for item in batch:
-                analyzed_data["needs_review"].append(
-                    make_exclusion_item(
-                        item,
-                        {"exclusion_reason": f"Batch review failed: {str(exc)[:160]}"},
-                    )
-                )
-
-    for key in ["reports", "events", "podcasts"]:
-        analyzed_data[key].sort(key=lambda row: (row.get("importance_score", 0), row.get("date", "")), reverse=True)
-
-    return analyzed_data
+                data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": f"model_review_failed: {str(exc)[:160]}"}))
+        if batch_index + 1 < len(batches):
+            time.sleep(2)
+    for category in ("reports", "events", "podcasts"):
+        data[category].sort(key=lambda row: (row.get("importance_score", 0), row.get("date", "")), reverse=True)
+    assert sum(len(data[k]) for k in ("reports", "events", "podcasts", "excluded", "needs_review")) == len(unique_items), "Analysis totals do not reconcile"
+    data["analysis_metrics"] = metrics
+    return data

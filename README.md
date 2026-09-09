@@ -26,6 +26,7 @@ pip install -r requirements.txt
 copy .env.example .env
 notepad .env
 python verify_scanner.py
+python -m unittest test_scanner_reliability -v
 python main.py --no-email
 ```
 
@@ -76,6 +77,38 @@ Configuration lives in `.env`.
 - `DISABLED_THINK_TANKS`: exact source names to exclude, separated by `|`.
 - `ENABLE_DDG_FALLBACK`: optional unpaid DDG fallback; default `false`.
 
+## New-item Eligibility And State
+
+Previously included items are excluded before model review and checked again against
+the ledger before report rendering. A changed date, changed content, RSS rediscovery,
+or a rerun on the same day does not make a reported item new. Candidates that were
+discovered but never included can still be retried. Comparison models may include
+the same new item within one scan.
+
+Publication dates are kept separate from modification dates. HTTP `Last-Modified`,
+sitemap `lastmod`, Atom `updated`, and PDF metadata timestamps cannot establish a
+new publication. Undated publications are held out of the new-publications report;
+the model can assess their relevance for review. Events require a verified future
+start date from structured page metadata and are announced once. Past events,
+event directories, and known programme/project landing pages are excluded.
+
+The ledger path is resolved relative to the scanner's code directory, regardless
+of the shell's working directory. Use an absolute `SEEN_LEDGER_PATH` when multiple
+checkouts should share history. Saves use atomic replacement and retain the prior
+valid state in `seen_items.json.bak`. A process lock prevents overlapping scans
+using the same ledger. An unreadable ledger stops the scan rather than silently
+starting with empty history. Stop scans and restore a validated ledger backup if
+this happens; a backup can lag the last successful save, so reconcile newer report
+history before resuming.
+
+Existing version-2 history is preserved and normalized on load; version 3 is saved
+on the next run. Observed request/redirect/canonical aliases retain prior report
+history. Old enrichment caches are refetched because their date provenance cannot
+be trusted. No ledger reset is required.
+
+These changes do not add automatic failed-email retries or alter the scheduled
+coverage window. A `--no-email` run still records rendered items as reported.
+
 ## Outputs
 
 Normal runs write to `reports/`:
@@ -123,3 +156,55 @@ See [docs/ADDING_SOURCES.md](docs/ADDING_SOURCES.md) before adding or removing s
 ## Sample Output
 
 See `sample_output/` for a small sanitized example report and recall audit. These are illustrative only and do not contain live scan results.
+
+
+## Durable runs and verification recovery
+
+Every scan now writes `reports/runs/<timestamp-id>/`, including the report, audit,
+`run.json` manifest and `pending_review.json` snapshot. `reports/latest.json` points
+to the most recent completed run. Same-day runs preserve all previous editions.
+The HTML email and PDF use the editorial report design; reruns following a
+successful email are labelled supplements with the previously delivered count.
+
+State beside the configured seen ledger includes `workflow_state.json`: unresolved
+verification work, deferred discovery candidates, relevance decisions and source
+checkpoints. Keep this state, its backup and the original seen ledger across runs.
+Missing or corrupt state with an existing backup fails explicitly; restore a
+validated backup before running again. Backups are replaced atomically.
+
+```powershell
+# Include publications up to the current Canberra time:
+python main.py --as-of now
+# Reassess relevance with fresh decisions (reported items remain suppressed):
+python main.py --reprocess
+# Make pending/paused verification cases eligible again, within per-source limits:
+python main.py --retry-pending
+# Offline regression and report generation checks:
+python -m unittest test_scanner_reliability test_scan_workflow -v
+python verify_scanner.py
+```
+
+Pending cases retry up to five per source per run, with 1, 2, 4, then 7-day delays.
+After six unsuccessful attempts they stay paused for attention rather than vanish.
+Thin extracts and publisher-declared paywalls require verification; no configured
+model/API produces pending decisions rather than unreviewed inclusions. Public
+same-publisher PDF links can recover evidence without supplying a publication date
+for the landing page. Priority date adapters cover CSIS, RUSI, CNAS and SIPRI.
+
+Native discovery removes reported items before its quota and retains overflow for
+later runs, oldest deferred first. A 1,000-item source backlog ceiling fails
+explicitly rather than silently dropping overflow. Successful source checkpoints
+extend the next window across gaps with six hours of overlap; sources with discovery
+failures do not advance. This improves coverage but cannot guarantee recall if a
+publisher removes old entries from its feed/index. Historical `--date` runs use the
+fixed window and do not advance checkpoints. The default cutoff remains 03:00
+Canberra time for the scheduled 05:00 scan.
+
+Decision reuse depends on content, publication evidence, model, topic guidance and
+prompt version. The model receives opening, relevant middle sections and conclusion
+within a 12,000-character default evidence budget. Candidate IDs map responses
+independently of order; missing/duplicate decisions remain pending. Audit counts
+separate selected candidates, cache hits, model submissions and review outcomes.
+
+The first run after upgrading refreshes the old extraction cache and initializes
+workflow state. It may take longer. Existing duplicate history is preserved.

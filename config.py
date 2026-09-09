@@ -42,13 +42,21 @@ DATE_POOR_SOURCE_THRESHOLD = float(os.getenv("DATE_POOR_SOURCE_THRESHOLD", "0.8"
 DATE_POOR_SOURCE_SAMPLE_PER_RUN = int(os.getenv("DATE_POOR_SOURCE_SAMPLE_PER_RUN", "3"))
 DATE_POOR_SAMPLE_MIN_TEXT_CHARS = int(os.getenv("DATE_POOR_SAMPLE_MIN_TEXT_CHARS", "300"))
 FULL_TEXT_CHAR_LIMIT = int(os.getenv("FULL_TEXT_CHAR_LIMIT", "12000"))
-LLM_ITEM_TEXT_CHAR_LIMIT = int(os.getenv("LLM_ITEM_TEXT_CHAR_LIMIT", "6500"))
+LLM_ITEM_TEXT_CHAR_LIMIT = int(os.getenv("LLM_ITEM_TEXT_CHAR_LIMIT", "12000"))
 LLM_BATCH_SIZE = int(os.getenv("LLM_BATCH_SIZE", "3"))
 ENABLE_ENRICHMENT_CACHE = os.getenv("ENABLE_ENRICHMENT_CACHE", "true").strip().lower() in ("1", "true", "yes", "on")
 ENRICHMENT_CACHE_DIR = os.getenv("ENRICHMENT_CACHE_DIR", os.path.join(".cache", "enrichment"))
 ENRICHMENT_CACHE_MAX_AGE_HOURS = int(os.getenv("ENRICHMENT_CACHE_MAX_AGE_HOURS", "168"))
 PDF_TEXT_MAX_PAGES = int(os.getenv("PDF_TEXT_MAX_PAGES", "25"))
-SEEN_LEDGER_PATH = os.getenv("SEEN_LEDGER_PATH", os.path.join(".scanner_state", "seen_items.json"))
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+SEEN_LEDGER_PATH = os.path.abspath(os.path.join(PROJECT_DIR, os.getenv("SEEN_LEDGER_PATH", os.path.join(".scanner_state", "seen_items.json"))))
+
+CHECKPOINT_OVERLAP_HOURS = 6
+PENDING_RETRIES_PER_SOURCE = 5
+PENDING_MAX_ATTEMPTS = 6
+MAX_CACHED_DECISIONS = 5000
+EVIDENCE_MIN_CHARS = 300
+TEXT_STORAGE_CHAR_LIMIT = 60000
 
 # Credible official think tanks.
 THINK_TANKS = [
@@ -554,3 +562,5 @@ IMPORTANCE_RATINGS = {
     2: ("**", "Niche"),
     1: ("*", "Low Priority"),
 }
+
+MAX_BACKLOG_PER_SOURCE = 1000  # Fail explicitly rather than silently discard overflow.

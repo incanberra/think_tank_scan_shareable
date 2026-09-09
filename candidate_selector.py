@@ -2,6 +2,7 @@ from collections import defaultdict
 from urllib.parse import urlparse
 
 import config
+import eligibility
 
 
 def should_review_candidate(item):
@@ -11,6 +12,11 @@ def should_review_candidate(item):
     Raw and enriched candidates remain in audit logs. This selector only prevents
     clearly stale or low-signal native-discovery links from consuming model time.
     """
+    if item.get("pending_waiting"):
+        return False, "pending_retry_not_due"
+    blocked = eligibility.exclusion_reason(item)
+    if blocked:
+        return False, blocked
     methods = set(item.get("discovery_methods") or [item.get("discovery_method", "")])
     date_status = item.get("date_status", "not_checked")
     item_type = item.get("item_type") or item.get("content_type_guess") or "report"
@@ -21,6 +27,10 @@ def should_review_candidate(item):
     extracted_chars = int(item.get("extracted_text_chars") or 0)
     title = item.get("title") or ""
 
+    if item.get("evidence_quality") == "insufficient":
+        return False, "insufficient_evidence"
+    if item.get("pending_retry") and date_status == "date_unknown":
+        return False, "publication_date_unverified"
     if "rss" in methods:
         return True, "rss_in_window"
     if date_status == "verified_in_window":
@@ -87,6 +97,8 @@ def date_poor_sources(items):
 
 
 def should_sample_date_poor_candidate(item, date_poor_source_names):
+    if item.get("pending_waiting") or item.get("evidence_quality") == "insufficient" or item.get("pending_retry") or eligibility.exclusion_reason(item):
+        return False
     source = item.get("institution", "Unknown")
     if source not in date_poor_source_names:
         return False
@@ -134,6 +146,7 @@ def select_candidates_for_review(items, max_per_source=None):
             else:
                 source_counts[source] += 1
 
+        item["review_selected"] = bool(should_review)
         if should_review:
             selected.append(item)
         else:
