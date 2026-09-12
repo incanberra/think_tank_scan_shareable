@@ -70,7 +70,7 @@ def generate_content_with_retry(model, messages, max_retries=5, initial_delay=3)
             else:
                 raise e
 
-def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3):
+def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, max_tokens=None, purpose="relevance"):
     """Bounded JSON review requests with auditable routing and transport retries."""
     import scan_runtime
     if not config.OPENROUTER_API_KEY:
@@ -80,11 +80,13 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3):
                "provider": {"require_parameters": True}}
     headers = {"Authorization": "Bearer " + config.OPENROUTER_API_KEY,
                "Content-Type": "application/json", "X-Title": "Think Tanks Scanner"}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     run = scan_runtime.current()
     delay = initial_delay
     for attempt in range(max_retries):
         started = time.monotonic()
-        record = {"requested_model": payload["model"], "attempt": attempt + 1}
+        record = {"requested_model": payload["model"], "attempt": attempt + 1, "purpose": purpose}
         transient = False
         try:
             response = requests.post("https://openrouter.ai/api/v1/chat/completions",

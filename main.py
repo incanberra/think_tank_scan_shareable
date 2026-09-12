@@ -7,6 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import eligibility
+import evidence_rescue
 import scan_runtime
 from state_storage import locked
 
@@ -241,6 +242,9 @@ def stage_enrich_select_and_audit(raw_candidates, status_notes, discovery_audit,
     )
     enrichment_audit["discovery"] = discovery_audit
     all_candidates = topic_utils.annotate_topic_hints(enriched_candidates)
+    if not skip_enrichment:
+        enrichment_audit["evidence_rescue"] = evidence_rescue.rescue_items(all_candidates, output_dir)
+        all_candidates = topic_utils.annotate_topic_hints(all_candidates)
     seen_audit = seen_ledger.annotate_items_with_seen_metadata(all_candidates, output_dir, run_date_str)
     enrichment_audit["seen_ledger"] = seen_audit
     print(
@@ -312,6 +316,8 @@ def map_item_for_json(item):
         "url": item["url"],
     }
     optional_fields = [
+        "rescue_status",
+        "rescue_evidence_url",
         "publication_date_source_detail",
         "evidence_quality",
         "decision_cache_status",

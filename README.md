@@ -1,5 +1,21 @@
 # Think Tank Scanner
 
+Thin-evidence rescue is enabled by default. Up to ten eligible articles per run
+are revisited, alternating sources, using explicit same-publisher PDF, AMP or
+print/full-text links (at most two alternatives each). Set
+`RESCUE_MAX_ITEMS_PER_RUN=0` to disable it or choose a smaller allowance.
+Recovery results are cached for 24 hours; valid relevance decisions are reused
+when the evidence, model and decision settings are unchanged. Unresolved items
+remain subject to the existing pending retry schedule and publication gates.
+Recovered articles use at most 12,000 evidence characters plus a 1,000-character
+source summary, with 1,600 output tokens and at most two API attempts per article
+per model. These are character/output limits, not an exact input-token ceiling.
+The recall audit records `evidence_rescue` counts; analysis metrics record
+`rescue_usage`, and the run manifest labels requests `purpose=evidence_rescue`.
+Reported usage includes retries where the provider supplies usage; missing usage
+is not proof of zero cost. No live scan is needed to run the offline checks:
+`python -m unittest test_evidence_rescue test_scanner_reliability test_scan_workflow test_ai_client -q`.
+
 Think Tank Scanner discovers recent reports, analysis, events, podcasts, and videos from a curated set of foreign policy and economic security sources. It enriches candidate pages, checks them against a persistent seen ledger, asks an OpenRouter model to assess relevance, then produces JSON, Markdown, HTML, and PDF reports. Successful runs send the primary PDF report by email unless `--no-email` is used.
 
 ## What It Checks

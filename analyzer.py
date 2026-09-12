@@ -198,8 +198,9 @@ def compact_item_for_prompt(item, idx):
         "extracted_text_chars": item.get("extracted_text_chars", 0),
         "discovery_methods": item.get("discovery_methods") or [item.get("discovery_method", "unknown")],
         "topic_hints": topic_hints,
-        "source_summary": item.get("summary") or item.get("raw_summary") or "",
-        "full_text_excerpt": evidence_selection.excerpt(text),
+        "source_summary": (item.get("summary") or item.get("raw_summary") or "")[:1000] if item.get("rescue_status") == "recovered" else item.get("summary") or item.get("raw_summary") or "",
+        "full_text_excerpt": evidence_selection.excerpt(text, budget=min(config.LLM_ITEM_TEXT_CHAR_LIMIT, config.RESCUE_TEXT_CHAR_LIMIT) if item.get("rescue_status") == "recovered" else None),
+        "rescue_evidence_url": item.get("rescue_evidence_url", ""),
         "evidence_quality": item.get("evidence_quality", "unknown"),
         "event_start_at": item.get("event_start_at", ""),
     }
@@ -292,6 +293,9 @@ def make_final_item(orig_item, analysis):
             final_item[field] = orig_item[field]
     if analysis.get("event_time"):
         final_item["event_time"] = analysis["event_time"]
+    for field in ("rescue_status", "rescue_evidence_url"):
+        if field in orig_item:
+            final_item[field] = orig_item[field]
     return final_item
 
 
@@ -368,6 +372,7 @@ def analyze_items(items, override_model=None):
     """Review sufficient evidence; cache decisions and match responses by ID."""
     model = ai_client.get_openrouter_model(override_model)
     run = scan_runtime.current()
+    request_start = len(getattr(run, "model_requests", []))
     unique_items = deduplicate_items(topic_utils.annotate_topic_hints(items))
     data = {key: [] for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
     metrics = {"selected_candidates": len(items), "unique_candidates": len(unique_items),
@@ -405,13 +410,17 @@ def analyze_items(items, override_model=None):
         return data
 
     batch_size = max(1, config.LLM_BATCH_SIZE)
-    batches = [uncached[i:i + batch_size] for i in range(0, len(uncached), batch_size)]
+    ordinary = [item for item in uncached if item.get("rescue_status") != "recovered"]
+    rescued = [item for item in uncached if item.get("rescue_status") == "recovered"]
+    metrics["rescued_sent_to_model"] = len(rescued)
+    batches = [ordinary[i:i + batch_size] for i in range(0, len(ordinary), batch_size)] + [[item] for item in rescued]
     for batch_index, batch in enumerate(batches):
         print(f"[*] Reviewing relevance batch {batch_index + 1}/{len(batches)} ({len(batch)} candidates)...")
         metrics["sent_to_model"] += len(batch)
         before_batch = {key: len(data[key]) for key in data}
         try:
-            result = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt(batch)}])
+            options = {"max_retries": 2, "max_tokens": 1600, "purpose": "evidence_rescue"} if batch[0].get("rescue_status") == "recovered" else {}
+            result = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt(batch)}], **options)
             analyses = result.get("analyses", []) if isinstance(result, dict) else result
             by_id = {}
             duplicate_ids = set()
@@ -446,5 +455,14 @@ def analyze_items(items, override_model=None):
     for category in ("reports", "events", "podcasts"):
         data[category].sort(key=lambda row: (row.get("importance_score", 0), row.get("date", "")), reverse=True)
     assert sum(len(data[k]) for k in ("reports", "events", "podcasts", "excluded", "needs_review")) == len(unique_items), "Analysis totals do not reconcile"
+    rescue_requests = [row for row in getattr(run, "model_requests", [])[request_start:]
+                       if row.get("purpose") == "evidence_rescue"]
+    metrics["rescue_usage"] = {
+        "requests_including_retries": len(rescue_requests),
+        "requests_with_usage": sum(isinstance(row.get("usage"), dict) for row in rescue_requests),
+        "reported_prompt_tokens": sum((row.get("usage") or {}).get("prompt_tokens", 0) or 0 for row in rescue_requests),
+        "reported_completion_tokens": sum((row.get("usage") or {}).get("completion_tokens", 0) or 0 for row in rescue_requests),
+        "reported_cost_usd": sum((row.get("usage") or {}).get("cost", 0) or 0 for row in rescue_requests),
+    }
     data["analysis_metrics"] = metrics
     return data
