@@ -11,6 +11,7 @@ import content_extractor as extractor
 import eligibility
 import http_client
 import seen_ledger
+import editorial_policy
 from state_storage import atomic_json_write
 
 
@@ -37,7 +38,7 @@ def recover(item):
            for node in extractor.iter_json_ld(soup) if isinstance(node, dict)):
         return {}
     text = extractor.extract_text_from_html(response.text)
-    if len(text) >= config.EVIDENCE_MIN_CHARS:
+    if editorial_policy.body_quality(dict(item, extracted_text=text)) == 'sufficient':
         return {'text': text, 'evidence_url': response.url}
     targets = []
     for node in soup.select('meta[name="citation_pdf_url"], link[rel="amphtml"], '
@@ -56,7 +57,7 @@ def recover(item):
                 not publisher_url(url, page.get('resolved_url') or page.get('canonical_url') or target)):
             continue
         text = page.get('extracted_text', '')
-        if len(text) >= config.EVIDENCE_MIN_CHARS:
+        if editorial_policy.body_quality(dict(item, extracted_text=text)) == 'sufficient':
             return {'text': text, 'evidence_url': target}
     return {}
 
@@ -89,7 +90,7 @@ def rescue_items(items, output_dir):
     audit['eligible'] = len(ordered)
     audit['deferred'] = max(0, len(ordered) - config.RESCUE_MAX_ITEMS_PER_RUN)
     for item in ordered[:config.RESCUE_MAX_ITEMS_PER_RUN]:
-        key = hashlib.sha256(json.dumps([1, item['url'], item.get('extracted_text', ''),
+        key = hashlib.sha256(json.dumps([2, item['url'], item.get('extracted_text', ''),
             item.get('summary', '')], ensure_ascii=False).encode()).hexdigest()
         path = Path(config.ENRICHMENT_CACHE_DIR) / 'rescue' / (key + '.json')
         result = None
@@ -109,7 +110,7 @@ def rescue_items(items, output_dir):
                 item['rescue_error'] = type(exc).__name__
                 result = {}
         text = result.get('text', '')[:config.TEXT_STORAGE_CHAR_LIMIT]
-        if len(text) >= config.EVIDENCE_MIN_CHARS:
+        if editorial_policy.body_quality(dict(item, extracted_text=text)) == 'sufficient':
             item.update(extracted_text=text, extracted_text_chars=len(text), evidence_quality='sufficient',
                         content_hash=extractor.content_hash_for_text(text), rescue_status='recovered',
                         rescue_evidence_url=result['evidence_url'], extraction_status='rescued')

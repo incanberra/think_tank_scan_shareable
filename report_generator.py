@@ -157,8 +157,9 @@ def all_report_items(analyzed_data):
 
 def build_executive_summary(analyzed_data, recall_audit=None):
     items = all_report_items(analyzed_data)
+    priority_items = [i for i in items if i.get("editorial_tier") != "further_reading"]
     top_items = sorted(
-        items,
+        priority_items,
         key=lambda item: (item.get("importance_score", 0), item.get("relevance_confidence", "")),
         reverse=True,
     )[:5]
@@ -326,21 +327,28 @@ def generate_markdown(analyzed_data, run_date_str, status_notes, recall_audit=No
     analyzed_data = sanitize_report_data(analyzed_data)
     status_notes = sanitize_report_data(status_notes)
     recall_audit = sanitize_report_data(recall_audit)
+    def tiered_cards(items, date_label):
+        groups = []
+        for tier, label in (("main", "Main brief"), ("further_reading", "Further reading")):
+            rows = [i for i in items if i.get("editorial_tier", "main") == tier]
+            if rows:
+                groups.append("### " + label + "\n\n" + "\n\n---\n\n".join(format_markdown_card(i, date_label) for i in rows))
+        return "\n\n".join(groups) or "*No qualifying items found in this coverage window.*"
     # 1. New Publications Cards
     if analyzed_data["reports"]:
-        pub_cards = "\n\n---\n\n".join([format_markdown_card(item, "Date") for item in analyzed_data["reports"]])
+        pub_cards = tiered_cards(analyzed_data["reports"], "Date")
     else:
         pub_cards = "*No qualifying items found in this coverage window.*"
         
     # 2. Podcast & Video Cards
     if analyzed_data["podcasts"]:
-        podcast_cards = "\n\n---\n\n".join([format_markdown_card(item, "Date") for item in analyzed_data["podcasts"]])
+        podcast_cards = tiered_cards(analyzed_data["podcasts"], "Date")
     else:
         podcast_cards = "*No qualifying items found in this coverage window.*"
         
     # 3. Event Cards
     if analyzed_data["events"]:
-        event_cards = "\n\n---\n\n".join([format_markdown_card(item, "Event Date") for item in analyzed_data["events"]])
+        event_cards = tiered_cards(analyzed_data["events"], "Event Date")
     else:
         event_cards = "*No qualifying items found in this coverage window.*"
         

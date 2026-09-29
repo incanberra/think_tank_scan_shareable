@@ -34,7 +34,7 @@ def publication(**overrides):
         "date_source": "page_publication",
         "published_at_verified": "2026-09-07T10:00:00+10:00",
         "scan_run_date": "2026-09-08",
-        "extracted_text": "Research evidence and analysis.",
+        "extracted_text": "Research evidence and analysis. " * 35,
         "extracted_text_chars": 1000,
         "topic_hints": [],
         "item_type": "report",
@@ -280,7 +280,7 @@ class ReliabilityTests(unittest.TestCase):
         args = ["main.py", "--date", "2026-09-08", "--model", "test/one,test/two", "--output-dir", str(self.root / "reports"), "--no-email"]
         def discover(_date):
             return [copy.deepcopy(item)], {"Example Institute": "checked/found 1"}, {}
-        with patch.object(sys, "argv", args), patch.object(main, "stage_discover", side_effect=discover), patch.object(config, "OPENROUTER_API_KEY", "test"), patch.object(content_extractor, "extract_page", side_effect=lambda *_: {"extracted_text": "Artificial intelligence governance and economic security research. " * 20, "extracted_date_dt": None}), patch.object(analyzer.ai_client, "generate_json_with_retry", return_value={"analyses": [{"temp_id": 0, "is_material_match": True, "evidence": ["AI governance research"], "category": "report"}]}), patch.object(main.emailer, "send_report_email") as email, contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, "argv", args), patch.object(main, "stage_discover", side_effect=discover), patch.object(config, "OPENROUTER_API_KEY", "test"), patch.object(content_extractor, "extract_page", side_effect=lambda *_: {"extracted_text": "Artificial intelligence governance and economic security research. " * 20, "extracted_date_dt": None}), patch.object(analyzer.ai_client, "generate_json_with_retry", return_value={"analyses": [{"temp_id": 0, "is_material_match": True, "evidence": ["Artificial intelligence governance and economic security research."], "matched_topics": [config.ECONOMIC_SECURITY_TOPICS[0]], "editorial_tier": "main", "summary": "A research summary.", "category": "report"}]}), patch.object(main.emailer, "send_report_email") as email, contextlib.redirect_stdout(io.StringIO()):
             main.main()
             first_dir = Path(json.loads((self.root / "reports" / "latest.json").read_text())["directory"])
             for model in ("test-one", "test-two"):

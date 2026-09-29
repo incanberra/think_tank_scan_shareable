@@ -1,5 +1,57 @@
 # Think Tank Scanner
 
+## Jev triage pilot (test branch)
+
+This branch adds a versioned economic-mechanism policy, main-brief versus
+further-reading sections, validated body quotes, one targeted repair for malformed
+candidate decisions, and public embedded-body extraction for Lowy's Interpreter.
+Publication bodies shorter than 600 characters are held for recovery; substantive
+event/podcast descriptions retain the 300-character floor. These floors are
+conservative screening rules, not proof that a complete article was retrieved.
+Publisher metadata descriptions no longer substitute for structured article bodies.
+Cancelled events are blocked before model review. Dates and delivered history
+remain deterministic gates.
+
+`TRIAGE_MODE=off` is the default. `shadow` records Jev proposals while GLM makes
+the decisions; `active` applies conservative exclusions and insufficient-evidence
+holds. Jev's Decisions API uses the existing OpenRouter key and a separate
+`TRIAGE_MODEL=typesafe/jev-1.13`; keep `OPENROUTER_MODEL` as the summary model.
+Requests use four questions per article, at most four concurrent requests and two
+transport attempts. Authentication/schema failures fall back to GLM, never to an
+automatic rejection. Automatic exclusion requires adequate evidence, near-unanimous
+centrality probabilities, a low mechanism probability, and an untruncated body.
+These thresholds have not been calibrated against reader labels; do not activate
+production exclusions on the strength of model agreement alone.
+
+Jev receives up to 60,000 stored body characters (configurable with
+`TRIAGE_TEXT_CHAR_LIMIT`), while GLM retains its existing smaller evidence budget.
+Bodies reaching the storage ceiling are marked incomplete and cannot be
+automatically excluded. This costs slightly more input but avoids treating an
+omitted passage as evidence that a long article is irrelevant.
+
+Validated triage decisions have a separate seven-day cache keyed by full evidence
+hash, model family, rubric, question definitions and packet version. Served model,
+all distributions, routing, fallback, usage and latency are audited. A model family
+may change its served snapshot; the served snapshot is recorded, not guaranteed.
+Changing the policy invalidates GLM decisions but preserves delivered history.
+
+Run all offline regression tests with `python -m unittest discover -q`.
+To replay saved candidates without sending email or changing production state:
+
+```powershell
+python scripts/evaluate_triage.py --snapshots ../reports --output reports/jev-pilot --limit 100 --mode shadow
+python scripts/evaluate_triage.py --snapshots ../reports --output reports/jev-draft --date 2026-09-30 --limit 30 --mode active --analyse
+```
+
+The evaluator restricts all output and mutable state to this checkout's ignored
+`reports` directory. It never calls the email or delivery-history functions.
+Its stratified original-model outcomes are comparison data, not accuracy labels.
+The evaluator also accepts `--reasoning-effort low` for compatible models; this is
+an explicit experiment, not the default. `REVIEW_REASONING_EFFORT` is blank by
+default. Reasoning choices are audited and invalidate the GLM decision cache.
+For a production decision, use independent reader labels and a held-out set, then
+five shadow runs. The existing scheduled scanner is not changed by this branch.
+
 Thin-evidence rescue is enabled by default. Up to ten eligible articles per run
 are revisited, alternating sources, using explicit same-publisher PDF, AMP or
 print/full-text links (at most two alternatives each). Set
@@ -8,8 +60,9 @@ Recovery results are cached for 24 hours; valid relevance decisions are reused
 when the evidence, model and decision settings are unchanged. Unresolved items
 remain subject to the existing pending retry schedule and publication gates.
 Recovered articles use at most 12,000 evidence characters plus a 1,000-character
-source summary, with 1,600 output tokens and at most two API attempts per article
-per model. These are character/output limits, not an exact input-token ceiling.
+source summary, with 1,600 output tokens and at most two primary API attempts per
+article per model, plus at most one targeted decision repair. These are
+character/output limits, not an exact input-token ceiling.
 The recall audit records `evidence_rescue` counts; analysis metrics record
 `rescue_usage`, and the run manifest labels requests `purpose=evidence_rescue`.
 Reported usage includes retries where the provider supplies usage; missing usage

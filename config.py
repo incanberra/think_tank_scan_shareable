@@ -10,6 +10,11 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # OpenRouter configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+TRIAGE_MODE = os.getenv("TRIAGE_MODE", "off").strip().lower()
+TRIAGE_MODEL = os.getenv("TRIAGE_MODEL", "typesafe/jev-1.13")
+TRIAGE_CONCURRENCY = int(os.getenv("TRIAGE_CONCURRENCY", "4"))
+TRIAGE_TEXT_CHAR_LIMIT = max(600, min(60000, int(os.getenv("TRIAGE_TEXT_CHAR_LIMIT", "60000"))))
+REVIEW_REASONING_EFFORT = os.getenv("REVIEW_REASONING_EFFORT", "").strip().lower()
 
 # Recommended models for selection and comparison
 OPENROUTER_RECOMMENDED_MODELS = [

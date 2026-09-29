@@ -20,7 +20,7 @@ import config
 from state_storage import atomic_json_write
 
 _active = ContextVar("scanner_run", default=None)
-PROMPT_VERSION = "economic-security-v4-evidence-sections"
+PROMPT_VERSION = "economic-security-v5-verbatim-editorial-tiers"
 RETRY_REASONS = {"publication_date_unverified", "date_unknown_seen_before_skipped",
                  "event_date_unverified", "insufficient_evidence", "source_review_cap",
                  "model_review_failed", "model_response_invalid", "publication_date_conflict"}
@@ -236,7 +236,11 @@ class ScanRun:
     def decision_key(self, item, model):
         packet = {k: item.get(k) for k in ("url", "canonical_url", "title", "summary", "extracted_text", "published_at_verified", "date_source", "event_start_at", "evidence_quality")}
         import topic_utils
-        packet.update(model=model, prompt_version=PROMPT_VERSION, ontology=topic_utils.build_topic_prompt_block(), text_budget=config.LLM_ITEM_TEXT_CHAR_LIMIT)
+        import editorial_policy
+        packet.update(model=model, prompt_version=PROMPT_VERSION, ontology=topic_utils.build_topic_prompt_block(),
+                      editorial_policy=editorial_policy.POLICY, rubric_version=editorial_policy.RUBRIC_VERSION,
+                      packet_version=editorial_policy.PACKET_VERSION, text_budget=config.LLM_ITEM_TEXT_CHAR_LIMIT,
+                      reasoning_effort=config.REVIEW_REASONING_EFFORT)
         if item.get("rescue_status") == "recovered":
             packet.update(rescue_version=1, rescue_text_budget=config.RESCUE_TEXT_CHAR_LIMIT,
                           rescue_evidence_url=item.get("rescue_evidence_url"))

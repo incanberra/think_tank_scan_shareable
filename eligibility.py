@@ -1,5 +1,6 @@
 """Deterministic eligibility rules; model decisions cannot override these."""
 from urllib.parse import urlparse
+import re
 
 import content_extractor
 import source_discovery
@@ -19,6 +20,8 @@ def exclusion_reason(item, require_publication=False):
     ):
         return "programme_or_project_page"
     if item.get("item_type") == "event" or item.get("content_type_guess") == "event":
+        if re.search(r"\bcancell?ed\b", str(item.get("title", "")), re.I):
+            return "cancelled_event"
         start = content_extractor.parse_date(item.get("event_start_at"))
         run_date = item.get("scan_run_date") or item.get("last_seen_run_date")
         if not start or not run_date:

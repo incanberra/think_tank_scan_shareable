@@ -381,6 +381,8 @@ def save_analysis_audit(output_dir, run_date_str, model_slug, analyzed_data):
         "model": model_slug,
         "run_id": scan_runtime.current().run_id if scan_runtime.current() else "",
         "analysis_metrics": analyzed_data.get("analysis_metrics", {}),
+        "triage": analyzed_data.get("triage", []),
+        "validation_failures": analyzed_data.get("validation_failures", []),
         "included": [dict(item, category=category) for category in ("reports", "podcasts", "events") for item in analyzed_data.get(category, [])],
         "included_counts": {
             "reports": len(analyzed_data.get("reports", [])),

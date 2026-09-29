@@ -109,6 +109,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIsNone(run.get_decision(item,'other-model'))
         with patch.object(topic_utils,'build_topic_prompt_block',return_value='changed ontology'):
             self.assertIsNone(run.get_decision(item,'model'))
+        with patch.object(config,'REVIEW_REASONING_EFFORT','low'):
+            self.assertIsNone(run.get_decision(item,'model'))
         run.reprocess=True;self.assertIsNone(run.get_decision(item,'model'))
     def test_reordered_model_results_and_cache_avoid_repeat_calls(self):
         run=self.run_state();items=[publication(url=f'https://example.org/research/{i}',title=f'Research study {i}',extracted_text='Evidence '*100) for i in range(2)]

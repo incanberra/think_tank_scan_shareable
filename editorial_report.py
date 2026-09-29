@@ -35,6 +35,12 @@ def context(data, date, audit=None):
             item["publication_evidence_label"] = ("Publisher publication metadata" if "metadata" in detail or "citation" in detail or detail == "page_publication"
                 else "Publication date displayed by publisher" if "visible" in detail else "Publisher feed publication date" if "rss" in detail or "atom" in detail else "See publication audit")
             items.append(item)
+    items.sort(key=lambda item: item.get("editorial_tier") == "further_reading")
+    previous_section = None
+    for item in items:
+        section = "Further reading" if item.get("editorial_tier") == "further_reading" else "Main brief"
+        item["section_heading"] = section if section != previous_section else ""
+        previous_section = section
     prior = int(meta.get("prior_delivered_today", 0))
     source_rows = audit.get("source_health", {}).get("sources", [])
     degraded = [r["source"] for r in source_rows if scan_runtime.source_state(r.get("status", "")) in {"degraded", "unavailable"}]
@@ -50,7 +56,7 @@ def context(data, date, audit=None):
     if not items:
         headline = "No additional verified items" if prior else "No verified items for this edition"
     return {"date": datetime.strptime(date, "%Y-%m-%d").strftime("%A, %d %B %Y"),
-            "headline": headline, "edition": "Supplement" if prior else "Daily edition", "prior": prior,
+            "headline": headline, "edition": "Test draft" if audit.get("evaluation") else "Supplement" if prior else "Daily edition", "prior": prior,
             "items": items, "count": len(items), "cutoff": cutoff, "run_id": meta.get("run_id", ""),
             "unknown": unknown, "degraded": degraded, "coverage_limited": bool(unknown or degraded),
             "reviewed": analysis_metrics.get("sent_to_model", selection.get("selected_for_review", 0)),
@@ -92,6 +98,8 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
         story.append(p("COVERAGE INCOMPLETE", "label"))
         story.append(p(f'{c["unknown"]} candidates have unverified publication dates. ' + ("Discovery issues: " + "; ".join(c["degraded"]) if c["degraded"] else ""), "small"))
     for index, item in enumerate(c["items"], 1):
+        if item.get("section_heading"):
+            story.extend([Spacer(1, 12), p(item["section_heading"], "title")])
         story.extend([Spacer(1, 12), KeepTogether([p(f'{index:02d}  {item["category_label"].upper()}  /  {item.get("institution", "")}', "label"), p(item.get("title"), "title")]),
                       p(f'{item.get("author", "")}  |  Published {item.get("date", "Date unverified")}', "small"),
                       p("WHY IT MATTERS", "label"), p(item.get("why_it_matters"), "why"),

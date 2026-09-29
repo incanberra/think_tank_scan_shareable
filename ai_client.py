@@ -82,11 +82,16 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
                "Content-Type": "application/json", "X-Title": "Think Tanks Scanner"}
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if config.REVIEW_REASONING_EFFORT:
+        if config.REVIEW_REASONING_EFFORT not in ("none", "minimal", "low", "medium", "high"):
+            raise ValueError("Invalid REVIEW_REASONING_EFFORT")
+        payload["reasoning"] = {"effort": config.REVIEW_REASONING_EFFORT}
     run = scan_runtime.current()
     delay = initial_delay
     for attempt in range(max_retries):
         started = time.monotonic()
-        record = {"requested_model": payload["model"], "attempt": attempt + 1, "purpose": purpose}
+        record = {"requested_model": payload["model"], "attempt": attempt + 1, "purpose": purpose,
+                  "reasoning": payload.get("reasoning")}
         transient = False
         try:
             response = requests.post("https://openrouter.ai/api/v1/chat/completions",

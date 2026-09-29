@@ -15,6 +15,7 @@
 {% if coverage_limited %}<div class="coverage" style="margin-top:20px;padding:12px 15px;background:#f8efdf;border-left:3px solid #805321;color:#805321;font-size:13px">Coverage incomplete<br><span style="font-size:12px">{{ unknown }} candidates have unverified publication dates.{% if degraded %} Discovery issues: {{ degraded|join('; ') }}.{% endif %}</span></div>{% endif %}
 </td></tr>
 {% for item in items %}<tr><td class="pad" style="padding:20px 38px 30px">
+{% if item.section_heading %}<h2 style="font-family:Georgia,serif;font-weight:400;font-size:30px;border-bottom:2px solid #185e65;padding-bottom:12px">{{ item.section_heading }}</h2>{% endif %}
 <p class="label" style="color:#185e65;font-size:11px;letter-spacing:1.3px">{{ '%02d'|format(loop.index) }} &nbsp; {{ item.category_label|upper }} / {{ item.institution|upper }}</p>
 <h2 class="story-title" style="font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:29px;line-height:1.2;margin:8px 0 16px">{{ item.title }}</h2>
 <p class="meta" style="font-size:12px;color:#52616b">{{ item.author }} &nbsp; | &nbsp; Published {{ item.date or 'date unverified' }}{% if item.event_start_at %}<br>Event starts: {{ item.event_start_at }}{% endif %}</p>

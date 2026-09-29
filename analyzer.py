@@ -15,6 +15,8 @@ from seen_ledger import normalize_url
 import eligibility
 import scan_runtime
 import evidence_selection
+import editorial_policy
+import triage
 
 
 def normalize_title(title):
@@ -199,7 +201,7 @@ def compact_item_for_prompt(item, idx):
         "discovery_methods": item.get("discovery_methods") or [item.get("discovery_method", "unknown")],
         "topic_hints": topic_hints,
         "source_summary": (item.get("summary") or item.get("raw_summary") or "")[:1000] if item.get("rescue_status") == "recovered" else item.get("summary") or item.get("raw_summary") or "",
-        "full_text_excerpt": evidence_selection.excerpt(text, budget=min(config.LLM_ITEM_TEXT_CHAR_LIMIT, config.RESCUE_TEXT_CHAR_LIMIT) if item.get("rescue_status") == "recovered" else None),
+        "full_text_excerpt": editorial_policy.packet(item)["body"],
         "rescue_evidence_url": item.get("rescue_evidence_url", ""),
         "evidence_quality": item.get("evidence_quality", "unknown"),
         "event_start_at": item.get("event_start_at", ""),
@@ -221,12 +223,12 @@ Candidate evidence packets:
 For EACH candidate, decide whether it is materially relevant to at least one topic. Use the full_text_excerpt when it is available. Topic hints are recall aids, not final judgments.
 
 Rules:
-1. Prefer recall when the evidence clearly relates to the ontology, but reject passing mentions, generic geopolitics, routine macro commentary, and items with no material economic-security angle.
+1. Apply this editorial policy: {editorial_policy.POLICY}
 2. If evidence is insufficient to establish relevance, set needs_review to true rather than guessing or rejecting from a title alone.
 3. Never override publication dates or prior-report history. Modification timestamps are not publication dates. Only events with a verified future event_start_at are eligible outside the publication window.
 4. Undated publications may be assessed for relevance, but are held for review and cannot appear as new publications. Do not invent dates.
 5. First-seen dates are discovery timestamps, not publication dates. Do not treat an unresolved date as a relevance rejection; date eligibility is enforced separately.
-6. Every included item must have 1-3 short evidence strings copied or closely paraphrased from the title, summary, or full text. Evidence should explain why it matched the topic set.
+6. Every included item must have 1-3 verbatim quotes from full_text_excerpt, each at least 25 characters long. Do not quote paragraph identifiers or use the title or source_summary as evidence. These quotes must substantiate a concrete economic mechanism. They will be checked against the retrieved body. Give editorial_tier main for core analysis or further_reading for sustained supporting analysis.
 7. Summaries must be 2-4 sentences and grounded in the evidence packet. Do not invent details that are not supported by the packet.
 
 Return raw JSON only, with exactly one analysis for every input item. Copy each input temp_id into its result. Order is not significant:
@@ -239,6 +241,7 @@ Return raw JSON only, with exactly one analysis for every input item. Copy each 
       "title": "Cleaned title",
       "author": "Author(s) or speakers, or N/A",
       "matched_topics": ["Topic 1"],
+      "editorial_tier": "main",
       "summary": "2-4 sentence evidence-grounded summary.",
       "why_it_matters": "1-2 sentence strategic relevance statement.",
       "importance_score": 3,
@@ -256,8 +259,6 @@ Return raw JSON only, with exactly one analysis for every input item. Copy each 
 
 def make_final_item(orig_item, analysis):
     topics = valid_topics(analysis.get("matched_topics") or [])
-    if not topics:
-        topics = fallback_tags(orig_item)
 
     final_item = {
         "title": analysis.get("title") or orig_item.get("title") or orig_item.get("extracted_title"),
@@ -265,6 +266,7 @@ def make_final_item(orig_item, analysis):
         "date": orig_item.get("date") or orig_item.get("extracted_date") or "",
         "author": analysis.get("author") or orig_item.get("author") or orig_item.get("extracted_author") or "N/A",
         "tags": topics,
+        "editorial_tier": analysis.get("editorial_tier", "main"),
         "summary": analysis.get("summary") or orig_item.get("summary") or "",
         "why_it_matters": analysis.get("why_it_matters") or "",
         "importance_score": clamp_score(analysis.get("importance_score")),
@@ -300,7 +302,7 @@ def make_final_item(orig_item, analysis):
 
 
 def make_exclusion_item(orig_item, analysis, reason_prefix=""):
-    reason = analysis.get("exclusion_reason") or "Not a material match to the configured economic-security topic set."
+    reason = analysis.get("exclusion_reason") or ("Insufficient evidence to decide relevance." if analysis.get("needs_review") or reason_prefix else "Not a material match to the configured economic-security topic set.")
     if reason_prefix:
         reason = f"{reason_prefix}: {reason}"
     return {
@@ -375,6 +377,7 @@ def analyze_items(items, override_model=None):
     request_start = len(getattr(run, "model_requests", []))
     unique_items = deduplicate_items(topic_utils.annotate_topic_hints(items))
     data = {key: [] for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
+    data["validation_failures"] = []
     metrics = {"selected_candidates": len(items), "unique_candidates": len(unique_items),
                "cache_hits": 0, "sent_to_model": 0, "insufficient_evidence": 0}
     uncached = []
@@ -391,17 +394,41 @@ def analyze_items(items, override_model=None):
         add_item_to_category(data, make_final_item(item, analysis), category)
 
     for item in unique_items:
-        if item.get("evidence_quality") == "insufficient":
+        blocked = eligibility.exclusion_reason(item)
+        if blocked:
+            data["excluded" if blocked == "cancelled_event" else "needs_review"].append(make_exclusion_item(item, {"exclusion_reason": blocked}))
+            continue
+        if item.get("evidence_quality") == "insufficient" or editorial_policy.body_quality(item) == "insufficient":
             data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "insufficient_evidence"}))
             metrics["insufficient_evidence"] += 1
             continue
+        uncached.append(item)
+
+    triage_records = triage.evaluate(uncached, run)
+    data["triage"] = triage_records
+    metrics["triage_mode"] = config.TRIAGE_MODE
+    metrics["triage_requests"] = sum(r["cache_status"] == "miss" for r in triage_records)
+    metrics["triage_fallbacks"] = sum(r["proposed_route"] == "fallback" for r in triage_records)
+    metrics["triage_excluded"] = metrics["triage_held"] = 0
+    to_review = []
+    for index, item in enumerate(uncached):
+        record = triage_records[index] if triage_records else {}
+        action = record.get("effective_route", "glm")
+        if action in ("exclude", "hold"):
+            key = "excluded" if action == "exclude" else "needs_review"
+            data[key].append(make_exclusion_item(item, {"exclusion_reason": record["reason"]}))
+            metrics["triage_excluded" if action == "exclude" else "triage_held"] += 1
+            continue
         cached = run.get_decision(item, model) if run else None
+        if cached and editorial_policy.validation_error(item, cached):
+            cached = None
         if cached:
             item["decision_cache_status"] = "hit"
             metrics["cache_hits"] += 1
             apply(item, cached)
         else:
-            uncached.append(item)
+            to_review.append(item)
+    uncached = to_review
 
     if not config.OPENROUTER_API_KEY:
         for item in uncached:
@@ -417,9 +444,9 @@ def analyze_items(items, override_model=None):
     for batch_index, batch in enumerate(batches):
         print(f"[*] Reviewing relevance batch {batch_index + 1}/{len(batches)} ({len(batch)} candidates)...")
         metrics["sent_to_model"] += len(batch)
-        before_batch = {key: len(data[key]) for key in data}
+        before_batch = {key: len(data[key]) for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
         try:
-            options = {"max_retries": 2, "max_tokens": 1600, "purpose": "evidence_rescue"} if batch[0].get("rescue_status") == "recovered" else {}
+            options = {"max_retries": 2, "max_tokens": 1600, "purpose": "evidence_rescue"} if batch[0].get("rescue_status") == "recovered" else {"max_retries": 2}
             result = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt(batch)}], **options)
             analyses = result.get("analyses", []) if isinstance(result, dict) else result
             by_id = {}
@@ -435,12 +462,22 @@ def analyze_items(items, override_model=None):
                 by_id[index] = row
             for index, item in enumerate(batch):
                 row = by_id.get(index)
-                valid = (row and index not in duplicate_ids and type(row.get("is_material_match")) is bool
-                         and type(row.get("needs_review", False)) is bool
-                         and (not row.get("is_material_match") or isinstance(row.get("evidence"), list) and bool(row["evidence"])))
-                if not valid:
-                    data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_response_invalid: missing, duplicate or invalid candidate decision"}))
-                    continue
+                error = "duplicate candidate ID" if index in duplicate_ids else editorial_policy.validation_error(item, row)
+                if error:
+                    data["validation_failures"].append({"url": item.get("url"), "error": error, "response": row, "stage": "initial"})
+                    # Retry only the defective candidate, once, with a fresh singleton ID.
+                    metrics["targeted_repairs"] = metrics.get("targeted_repairs", 0) + 1
+                    try:
+                        repaired = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt([item]) + "\nRepair the previous decision defect: " + error}], max_retries=1, purpose="schema_repair")
+                        rows = repaired.get("analyses", []) if isinstance(repaired, dict) else repaired
+                        row = rows[0] if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict) and type(rows[0].get("temp_id")) is int and rows[0]["temp_id"] == 0 else None
+                        error = editorial_policy.validation_error(item, row)
+                    except Exception as exc:
+                        error = f"repair failed: {type(exc).__name__}"
+                    if error:
+                        data["validation_failures"].append({"url": item.get("url"), "error": error, "response": row, "stage": "repair"})
+                        data["needs_review"].append(make_exclusion_item(item, dict(row or {}, exclusion_reason="model_response_invalid: " + error)))
+                        continue
                 item["decision_cache_status"] = "miss"
                 if run and not row.get("needs_review"):
                     run.cache_decision(item, model, row)
@@ -452,6 +489,8 @@ def analyze_items(items, override_model=None):
                 data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": f"model_review_failed: {str(exc)[:160]}"}))
         if batch_index + 1 < len(batches):
             time.sleep(2)
+        if run:
+            run.save_manifest("running")
     for category in ("reports", "events", "podcasts"):
         data[category].sort(key=lambda row: (row.get("importance_score", 0), row.get("date", "")), reverse=True)
     assert sum(len(data[k]) for k in ("reports", "events", "podcasts", "excluded", "needs_review")) == len(unique_items), "Analysis totals do not reconcile"

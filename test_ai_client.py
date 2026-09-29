@@ -18,4 +18,14 @@ class ClientTests(unittest.TestCase):
         response=Mock(status_code=200);response.json.return_value={'choices':[{'finish_reason':'length','message':{'content':'{"analyses": []}'}}]}
         with patch.object(config,'OPENROUTER_API_KEY','test'),patch.object(ai_client.requests,'post',return_value=response):
             with self.assertRaisesRegex(ValueError,'Incomplete'):ai_client.generate_json_with_retry('model',[],max_retries=1)
+    def test_reasoning_is_opt_in_and_audited(self):
+        response=Mock(status_code=200)
+        response.json.return_value={'choices':[{'finish_reason':'stop','message':{'content':'{"analyses": []}'}}]}
+        for effort in ('', 'low'):
+            run=Mock(model_requests=[])
+            with patch.object(config,'OPENROUTER_API_KEY','test'),patch.object(config,'REVIEW_REASONING_EFFORT',effort),patch.object(ai_client.requests,'post',return_value=response) as call,patch('scan_runtime.current',return_value=run):
+                ai_client.generate_json_with_retry('model',[])
+            expected={'effort':'low'} if effort else None
+            self.assertEqual(call.call_args.kwargs['json'].get('reasoning'),expected)
+            self.assertEqual(run.model_requests[0]['reasoning'],expected)
 if __name__=='__main__':unittest.main()
