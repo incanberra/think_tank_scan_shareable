@@ -12,6 +12,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, KeepTogether
 
 import scan_runtime
+from topic_badges import badges, TopicPills
 
 
 def safe_url(url):
@@ -31,6 +32,7 @@ def context(data, date, audit=None):
             if summary.startswith("Why it matters:\n") and "\n\nSummary:\n" in summary:
                 why, summary = summary[len("Why it matters:\n"):].split("\n\nSummary:\n", 1)
             item.update(summary=summary, why_it_matters=why, url=safe_url(item.get("url")), category_label=label)
+            item["topic_pills"], item["hidden_topic_count"] = badges(item)
             detail = item.get("publication_date_source_detail") or item.get("date_source", "")
             item["publication_evidence_label"] = ("Publisher publication metadata" if "metadata" in detail or "citation" in detail or detail == "page_publication"
                 else "Publication date displayed by publisher" if "visible" in detail else "Publisher feed publication date" if "rss" in detail or "atom" in detail else "See publication audit")
@@ -58,6 +60,7 @@ def context(data, date, audit=None):
     return {"date": datetime.strptime(date, "%Y-%m-%d").strftime("%A, %d %B %Y"),
             "headline": headline, "edition": "Test draft" if audit.get("evaluation") else "Supplement" if prior else "Daily edition", "prior": prior,
             "items": items, "count": len(items), "cutoff": cutoff, "run_id": meta.get("run_id", ""),
+            "pilot_note": (data.get("topic_pilot") or {}).get("note", ""),
             "unknown": unknown, "degraded": degraded, "coverage_limited": bool(unknown or degraded),
             "reviewed": analysis_metrics.get("sent_to_model", selection.get("selected_for_review", 0)),
             "cached": analysis_metrics.get("cache_hits", 0), "selected": selection.get("selected_for_review", 0),
@@ -82,9 +85,9 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
         "brand": ParagraphStyle("brand", fontName="Helvetica", fontSize=9, leading=13, textColor=teal, spaceAfter=14),
         "hero": ParagraphStyle("hero", fontName="Times-Roman", fontSize=30, leading=34, textColor=ink, spaceAfter=14),
         "title": ParagraphStyle("title", fontName="Times-Roman", fontSize=21, leading=25, textColor=ink, spaceAfter=11),
-        "body": ParagraphStyle("body", fontName="Helvetica", fontSize=10, leading=15, textColor=ink, spaceAfter=12),
-        "why": ParagraphStyle("why", fontName="Helvetica", fontSize=11, leading=16, textColor=ink, spaceAfter=14),
-        "small": ParagraphStyle("small", fontName="Helvetica", fontSize=8, leading=12, textColor=muted, spaceAfter=9),
+        "body": ParagraphStyle("body", fontName="Helvetica", fontSize=10, leading=15, textColor=ink, spaceAfter=10),
+        "why": ParagraphStyle("why", fontName="Helvetica", fontSize=11, leading=16, textColor=ink, spaceAfter=11),
+        "small": ParagraphStyle("small", fontName="Helvetica", fontSize=8, leading=12, textColor=muted, spaceAfter=7),
         "label": ParagraphStyle("label", fontName="Helvetica-Bold", fontSize=8, leading=12, textColor=teal, spaceAfter=5),
     }
     def p(text, style="body"):
@@ -94,19 +97,21 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
     if c["prior"]:
         story.append(p(f'{c["prior"]} items were delivered earlier today. This supplement contains {c["count"]} additional {"item" if c["count"] == 1 else "items"}.'))
     story.extend([p(f'{c["count"]} included   |   {c["repeats"]} previously reported candidates removed   |   {c["reviewed"]} sent for model review', "small"), HRFlowable(width="100%", color=line), Spacer(1, 14)])
+    if c["pilot_note"]:
+        story.append(p(c["pilot_note"], "small"))
     if c["coverage_limited"]:
         story.append(p("COVERAGE INCOMPLETE", "label"))
         story.append(p(f'{c["unknown"]} candidates have unverified publication dates. ' + ("Discovery issues: " + "; ".join(c["degraded"]) if c["degraded"] else ""), "small"))
     for index, item in enumerate(c["items"], 1):
         if item.get("section_heading"):
             story.extend([Spacer(1, 12), p(item["section_heading"], "title")])
-        story.extend([Spacer(1, 12), KeepTogether([p(f'{index:02d}  {item["category_label"].upper()}  /  {item.get("institution", "")}', "label"), p(item.get("title"), "title")]),
-                      p(f'{item.get("author", "")}  |  Published {item.get("date", "Date unverified")}', "small"),
-                      p("WHY IT MATTERS", "label"), p(item.get("why_it_matters"), "why"),
+        story.extend([Spacer(1, 8), KeepTogether([p(f'{index:02d}  {item["category_label"].upper()}  /  {item.get("institution", "")}', "label"), p(item.get("title"), "title"), TopicPills(item["topic_pills"], item["hidden_topic_count"])]),
+                      p(f'{item.get("author", "")}  |  Published {item.get("date") or "Date unverified"}', "small"),
+                      KeepTogether([p("WHY IT MATTERS", "label"), p(item.get("why_it_matters"), "why")]),
                       p(item.get("summary"))])
         if item.get("event_start_at"):
             story.append(p("Event starts: " + item["event_start_at"], "small"))
-        story.append(p(f'Priority {item.get("importance_score", "—")} / 5  |  Relevance: {item.get("relevance_confidence", "unrated")}  |  ' + "; ".join(item.get("tags", [])), "small"))
+        story.append(p(f'Priority {item.get("importance_score", "—")} / 5  |  Relevance: {item.get("relevance_confidence", "unrated")}', "small"))
         if item["url"]:
             story.append(Paragraph('<link href="' + html.escape(item["url"], quote=True) + '" color="#185e65">Read the original publication</link>', styles["body"]))
         story.extend([p("Publication evidence: " + str(item.get("publication_evidence_label")) + " | First discovered: " + str(item.get("first_seen_run_date", "Unknown")), "small"), HRFlowable(width="100%", color=line)])

@@ -30,13 +30,14 @@ def probability(value):
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
 
 
-def validate(result):
+def validate(result, questions=None):
+    questions = QUESTIONS if questions is None else questions
     if not isinstance(result, dict) or not isinstance(result.get("answers"), dict):
         raise ValueError("Missing Jev answers")
     answers = result["answers"]
-    if set(answers) != set(QUESTIONS):
+    if set(answers) != set(questions):
         raise ValueError("Unexpected Jev question IDs")
-    for name, question in QUESTIONS.items():
+    for name, question in questions.items():
         answer = answers[name]
         if not isinstance(answer, dict) or answer.get("type") != question["type"]:
             raise ValueError("Invalid Jev answer type: " + name)
@@ -55,15 +56,16 @@ def validate(result):
     return result
 
 
-def decide(state, run=None):
+def decide(state, run=None, questions=None, purpose="jev_triage"):
     if not config.OPENROUTER_API_KEY:
         raise ValueError("No OpenRouter API key configured")
-    payload = {"model": config.TRIAGE_MODEL, "state": state, "questions": QUESTIONS}
+    questions = QUESTIONS if questions is None else questions
+    payload = {"model": config.TRIAGE_MODEL, "state": state, "questions": questions}
     headers = {"Authorization": "Bearer " + config.OPENROUTER_API_KEY,
                "Content-Type": "application/json", "X-Title": "Think Tank Scanner triage pilot"}
     for attempt in range(2):
         started = time.monotonic()
-        record = {"purpose": "jev_triage", "requested_model": config.TRIAGE_MODEL, "attempt": attempt + 1}
+        record = {"purpose": purpose, "requested_model": config.TRIAGE_MODEL, "attempt": attempt + 1}
         transient = False
         try:
             response = requests.post(ENDPOINT, headers=headers, json=payload, timeout=(10, 45))
@@ -74,7 +76,7 @@ def decide(state, run=None):
             result = response.json()
             record.update(response_id=result.get("id"), actual_model=result.get("model"),
                           provider=result.get("provider"), usage=result.get("usage"))
-            validate(result)
+            validate(result, questions)
             record["status"] = "success"
             return result
         except (requests.RequestException, ValueError, RuntimeError) as exc:

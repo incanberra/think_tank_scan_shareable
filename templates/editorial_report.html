@@ -7,6 +7,7 @@
 <p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65">ECONOMIC SECURITY / THINK TANK BRIEF</p>
 <p class="meta" style="font-size:12px;color:#52616b">{{ date }} &nbsp; | &nbsp; {{ edition }}</p>
 <h1 class="hero" style="font-family:Georgia,'Times New Roman',serif;font-size:40px;line-height:1.12;font-weight:400;margin:24px 0 16px">{{ headline }}</h1>
+{% if pilot_note %}<p class="meta" style="font-size:12px;color:#52616b">{{ pilot_note }}</p>{% endif %}
 {% if prior %}<p class="muted">{{ prior }} items were delivered earlier today. This supplement contains {{ count }} additional {{ "item" if count == 1 else "items" }}.</p>{% endif %}
 <table role="presentation" class="stats" width="100%" style="border-top:1px solid #d8dcd9;border-bottom:1px solid #d8dcd9;margin-top:22px"><tr>
 <td style="padding:16px 0;font-size:13px"><span style="font-family:Georgia,serif;font-size:29px">{{ count }}</span> included</td>
@@ -18,11 +19,11 @@
 {% if item.section_heading %}<h2 style="font-family:Georgia,serif;font-weight:400;font-size:30px;border-bottom:2px solid #185e65;padding-bottom:12px">{{ item.section_heading }}</h2>{% endif %}
 <p class="label" style="color:#185e65;font-size:11px;letter-spacing:1.3px">{{ '%02d'|format(loop.index) }} &nbsp; {{ item.category_label|upper }} / {{ item.institution|upper }}</p>
 <h2 class="story-title" style="font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:29px;line-height:1.2;margin:8px 0 16px">{{ item.title }}</h2>
+<p style="margin:0 0 14px">{% for pill in item.topic_pills %}<span style="display:inline-block;border-radius:999px;padding:4px 10px;margin:0 4px 5px 0;font: bold 11px/1.5 Arial,Helvetica,sans-serif;white-space:nowrap;background:{{ pill.background }};color:{{ pill.foreground }}">{{ pill.label }}</span>{% endfor %}{% if item.hidden_topic_count %}<span style="font-size:11px;color:#52616b">+{{ item.hidden_topic_count }} more</span>{% endif %}</p>
 <p class="meta" style="font-size:12px;color:#52616b">{{ item.author }} &nbsp; | &nbsp; Published {{ item.date or 'date unverified' }}{% if item.event_start_at %}<br>Event starts: {{ item.event_start_at }}{% endif %}</p>
 <p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65;margin-bottom:5px">WHY IT MATTERS</p>
 <p class="why" style="font-size:17px;line-height:1.5;margin:6px 0 17px">{{ item.why_it_matters }}</p>
 <p style="font-size:14px;line-height:1.65">{{ item.summary }}</p>
-<p class="meta" style="font-size:12px;color:#52616b">{{ item.tags|join(' · ') }}</p>
 <p class="meta" style="font-size:12px;color:#52616b;border-top:1px solid #d8dcd9;padding-top:14px">Priority {{ item.importance_score }} / 5 &nbsp; · &nbsp; Relevance: {{ item.relevance_confidence or 'unrated' }}{% if item.url %}<br><a href="{{ item.url }}" style="color:#185e65">Read the original publication →</a>{% endif %}</p>
 <p class="meta" style="font-size:11px;color:#52616b">Publication evidence: {{ item.publication_evidence_label }} · First discovered: {{ item.first_seen_run_date or 'Unknown' }}</p>
 </td></tr>{% endfor %}
