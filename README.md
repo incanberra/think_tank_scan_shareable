@@ -240,3 +240,24 @@ truncated completions. Per-request audit records include actual provider/model,
 response ID, timing, token usage and reported cost when the API supplies them.
 Permanent authentication failures are not retried. The configured model is unchanged.
 Run `python -m unittest test_scanner_reliability test_scan_workflow test_ai_client -v`.
+
+### 2 October: topic pills and extraction fixes
+
+Email and PDF reports now display the existing topic labels as coloured pills
+below each article title. Colours come from a fixed 14-topic palette; at most three
+pills are displayed, with a `+N more` indicator. All original tags remain in the
+JSON audit. Jev proposals and confirmation metadata cannot add, remove or reorder
+the production pills. Jev topic experiments remain on `codex/jev-triage-test` and
+do not run in the production scanner or change its relevance decisions.
+
+The extractor recovers the public article body in Lowy Interpreter pages' embedded
+data, suppresses repeated nested paragraphs, excludes related JSON-LD articles and
+does not treat structured descriptions as complete bodies. On Atlantic Council
+pages, a named author biography can mark the end of the article before related
+recommendations, provided a substantial majority of the text is preserved.
+Extraction cache schema 8 invalidates earlier potentially contaminated extracts;
+the next scan may spend longer fetching fresh evidence. Delivery history and
+publication-date rules are preserved.
+
+Run `python -m unittest discover -v` for production regression checks, including
+the extraction boundaries, cache refresh and isolation of shadow topic proposals.

@@ -21,6 +21,7 @@ import config
 import scan_runtime
 import publication_dates
 import http_client
+import article_scope
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -54,7 +55,7 @@ AUTHOR_META_NAMES = [
 
 TITLE_META_NAMES = ["og:title", "twitter:title"]
 DESCRIPTION_META_NAMES = ["description", "og:description", "twitter:description"]
-STRUCTURED_BODY_FIELDS = ["articleBody", "description", "text"]
+STRUCTURED_BODY_FIELDS = ["articleBody", "text"]
 
 
 def utc_now_iso():
@@ -118,8 +119,8 @@ def load_cache_entry(url):
     try:
         with open(path, "r", encoding="utf-8") as handle:
             entry = json.load(handle)
-            # Old caches mixed modification and publication dates. Refetch them.
-            return entry if entry.get("schema_version") == 4 else None
+            # Refetch older extraction results: they may contain duplicate or related article text.
+            return entry if entry.get("schema_version") == 8 else None
     except Exception:
         return None
 
@@ -152,7 +153,7 @@ def write_cache_entry(request_url, page_data, response_headers=None):
     if page_data.get("canonical_url"):
         page_data["canonical_url"] = resolve_canonical_url(page_data["canonical_url"], page_data.get("resolved_url") or request_url)
     entry = {
-        "schema_version": 4,
+        "schema_version": 8,
         "request_url": request_url,
         "canonical_url": page_data.get("canonical_url") or request_url,
         "cache_saved_at": utc_now_iso(),
@@ -436,6 +437,8 @@ def extract_json_ld_metadata(soup, page_url=""):
 
 def extract_json_ld_body(soup):
     bodies = []
+    canonical = soup.find("link", rel="canonical")
+    page = str(canonical.get("href", "") if canonical else "").split("#")[0].rstrip("/")
     for item in iter_json_ld(soup):
         if not isinstance(item, dict):
             continue
@@ -443,14 +446,17 @@ def extract_json_ld_body(soup):
         if isinstance(item_type, list):
             item_type = " ".join(item_type)
         type_text = str(item_type).lower()
-        if type_text and not any(token in type_text for token in ["article", "newsarticle", "blogposting", "report"]):
+        if not any(token in type_text for token in ["article", "newsarticle", "blogposting", "report"]):
+            continue
+        identity = item.get("url") or item.get("@id") or ""
+        if page and isinstance(identity, str) and identity and identity.split("#")[0].rstrip("/") != page:
             continue
         for field in STRUCTURED_BODY_FIELDS:
             text = clean_text(item.get(field))
             if len(text) >= 80:
                 bodies.append(text)
                 break
-    return "\n\n".join(dict.fromkeys(bodies))
+    return max(bodies, key=len, default="")
 
 
 def find_canonical_url(soup, fallback_url):
@@ -522,8 +528,11 @@ def extract_candidate_roots(soup):
     return roots
 
 
-def extract_text_from_html(html, fallback_description=""):
+def extract_text_from_html(html, fallback_description="", source_url=""):
     soup = BeautifulSoup(html, "html.parser")
+    embedded = extract_lowy_flight_body(soup)
+    if embedded:
+        return embedded[:config.TEXT_STORAGE_CHAR_LIMIT]
     structured = extract_json_ld_body(soup)
     remove_boilerplate(soup)
     candidates = []
@@ -535,7 +544,9 @@ def extract_text_from_html(html, fallback_description=""):
         blocks = []
         for tag in root.find_all(["h1", "h2", "h3", "p", "li", "blockquote"]):
             text = clean_text(tag.get_text(" "))
-            if len(text) >= 30 and text not in blocks:
+            # Malformed/nested publisher paragraphs can expose a complete body
+            # followed by the same paragraphs again. Keep the first occurrence.
+            if len(text) >= 30 and not any(text in earlier for earlier in blocks):
                 blocks.append(text)
         if blocks:
             candidates.append("\n\n".join(blocks))
@@ -545,7 +556,82 @@ def extract_text_from_html(html, fallback_description=""):
     text = next((text for text in candidates if len(text) >= config.EVIDENCE_MIN_CHARS), "")
     if not text:
         text = max(candidates + [clean_text(fallback_description)], key=len, default="")
+    canonical = soup.find("link", rel="canonical")
+    url = source_url or (canonical.get("href", "") if canonical else "")
+    text, _ = article_scope.trim(text, url)
     return text[:config.TEXT_STORAGE_CHAR_LIMIT]
+
+
+def extract_lowy_flight_body(soup):
+    """Decode public Next.js data, never execute script text or scrape menus.
+
+    Lowy's Interpreter pages deliver their body as React Flight records. Limit
+    this parser to that publisher/template and explicit article prose containers.
+    """
+    canonical = soup.find("link", rel="canonical")
+    url = urlparse(canonical.get("href", "") if canonical else "")
+    if url.hostname not in ("www.lowyinstitute.org", "lowyinstitute.org") or not url.path.startswith("/the-interpreter/"):
+        return ""
+    chunks = []
+    for script in soup.find_all("script"):
+        match = re.fullmatch(r"self\.__next_f\.push\((.*)\);?", (script.string or "").strip(), re.S)
+        if not match:
+            continue
+        try:
+            value = json.loads(match.group(1))
+            if isinstance(value, list) and len(value) == 2 and value[0] == 1 and isinstance(value[1], str):
+                chunks.append(value[1])
+        except (ValueError, TypeError):
+            continue
+    records = {}
+    for line in "".join(chunks).splitlines():
+        match = re.match(r"^([0-9a-f]+):(.*)$", line)
+        if match:
+            try:
+                records[match[1]] = json.loads(match[2])
+            except ValueError:
+                pass
+
+    def resolve(node, visited):
+        if isinstance(node, str) and re.fullmatch(r"\$(?:L)?[0-9a-f]+", node):
+            key = node[2:] if node.startswith("$L") else node[1:]
+            if key not in visited:
+                return resolve(records.get(key), visited | {key})
+        return node
+
+    def prose(node, depth=0):
+        if depth > 80:
+            return []
+        node = resolve(node, set())
+        found = []
+        if isinstance(node, list):
+            if len(node) == 4 and node[0] == "$" and isinstance(node[3], dict):
+                props = node[3]
+                if props.get("className") == "prose dark:prose-invert":
+                    found.append(props.get("children"))
+                    return found
+            for child in node:
+                found.extend(prose(child, depth + 1))
+        elif isinstance(node, dict):
+            found.extend(prose(node.get("children"), depth + 1))
+        return found
+
+    def visible(node, depth=0):
+        if depth > 80:
+            return ""
+        node = resolve(node, set())
+        if isinstance(node, str):
+            return "" if node.startswith("$") else node
+        if isinstance(node, list):
+            if len(node) == 4 and node[0] == "$" and isinstance(node[3], dict):
+                if node[3].get("className") == "sr-only" or node[1] == "svg":
+                    return ""
+                return visible(node[3].get("children"), depth + 1) + ("\n\n" if node[1] in ("p", "h2", "h3", "li", "blockquote") else "")
+            return "".join(visible(child, depth + 1) for child in node)
+        return ""
+
+    candidates = [visible(body).strip() for record in records.values() for body in prose(record)]
+    return "\n\n".join(dict.fromkeys(text for text in candidates if text))
 
 
 def classify_content_type(url, title, text):
@@ -764,7 +850,7 @@ def extract_page(url, timeout=20, force_refresh=False):
     is_listing = any("collectionpage" in value for value in page_types)
     paywalled = any(str(node.get("isAccessibleForFree", "")).lower() == "false" for node in iter_json_ld(soup) if isinstance(node, dict))
     fallback_description = get_meta_content(soup, DESCRIPTION_META_NAMES)
-    text = extract_text_from_html(response.text, fallback_description=fallback_description)
+    text = extract_text_from_html(response.text, fallback_description=fallback_description, source_url=response.url or url)
     linked_pdf_url = ""
     if len(text) < config.EVIDENCE_MIN_CHARS and not is_listing:
         base = response.url or url
