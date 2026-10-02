@@ -28,4 +28,23 @@ class ClientTests(unittest.TestCase):
             expected={'effort':'low'} if effort else None
             self.assertEqual(call.call_args.kwargs['json'].get('reasoning'),expected)
             self.assertEqual(run.model_requests[0]['reasoning'],expected)
+    def test_provider_preference_is_opt_in_and_preserves_parameter_checks(self):
+        response=Mock(status_code=200)
+        response.json.return_value={'choices':[{'finish_reason':'stop','message':{'content':'{"topics": []}'}}]}
+        for options in (None, {'order':['together','siliconflow'],'ignore':['wafer'],'require_parameters':False}):
+            run=Mock(model_requests=[])
+            with patch.object(config,'OPENROUTER_API_KEY','test'),patch.object(ai_client.requests,'post',return_value=response) as call,patch('scan_runtime.current',return_value=run):
+                ai_client.generate_json_with_retry('model',[],provider_options=options)
+            provider=call.call_args.kwargs['json']['provider']
+            self.assertTrue(provider['require_parameters'])
+            self.assertEqual(provider.get('ignore'),['wafer'] if options else None)
+            self.assertEqual(run.model_requests[0]['provider_preferences'],provider)
+    def test_response_schema_is_opt_in(self):
+        response=Mock(status_code=200)
+        response.json.return_value={'choices':[{'finish_reason':'stop','message':{'content':'{"topics": {}}'}}]}
+        schema={'type':'object','properties':{'topics':{'type':'object'}},'required':['topics']}
+        with patch.object(config,'OPENROUTER_API_KEY','test'),patch.object(ai_client.requests,'post',return_value=response) as call:
+            ai_client.generate_json_with_retry('model',[],response_schema=schema)
+            self.assertEqual(call.call_args.kwargs['json']['response_format']['json_schema']['schema'],schema)
+            self.assertTrue(call.call_args.kwargs['json']['response_format']['json_schema']['strict'])
 if __name__=='__main__':unittest.main()

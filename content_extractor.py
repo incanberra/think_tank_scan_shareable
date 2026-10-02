@@ -22,6 +22,7 @@ import scan_runtime
 import publication_dates
 import http_client
 import editorial_policy
+import article_scope
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -120,7 +121,7 @@ def load_cache_entry(url):
         with open(path, "r", encoding="utf-8") as handle:
             entry = json.load(handle)
             # Old caches mixed modification and publication dates. Refetch them.
-            return entry if entry.get("schema_version") == 6 else None
+            return entry if entry.get("schema_version") == 7 else None
     except Exception:
         return None
 
@@ -153,7 +154,7 @@ def write_cache_entry(request_url, page_data, response_headers=None):
     if page_data.get("canonical_url"):
         page_data["canonical_url"] = resolve_canonical_url(page_data["canonical_url"], page_data.get("resolved_url") or request_url)
     entry = {
-        "schema_version": 6,
+        "schema_version": 7,
         "request_url": request_url,
         "canonical_url": page_data.get("canonical_url") or request_url,
         "cache_saved_at": utc_now_iso(),
@@ -528,7 +529,7 @@ def extract_candidate_roots(soup):
     return roots
 
 
-def extract_text_from_html(html, fallback_description=""):
+def extract_text_from_html(html, fallback_description="", source_url=""):
     soup = BeautifulSoup(html, "html.parser")
     embedded = extract_lowy_flight_body(soup)
     if embedded:
@@ -556,6 +557,9 @@ def extract_text_from_html(html, fallback_description=""):
     text = next((text for text in candidates if len(text) >= config.EVIDENCE_MIN_CHARS), "")
     if not text:
         text = max(candidates + [clean_text(fallback_description)], key=len, default="")
+    canonical = soup.find("link", rel="canonical")
+    url = source_url or (canonical.get("href", "") if canonical else "")
+    text, _ = article_scope.trim(text, url)
     return text[:config.TEXT_STORAGE_CHAR_LIMIT]
 
 
@@ -847,7 +851,7 @@ def extract_page(url, timeout=20, force_refresh=False):
     is_listing = any("collectionpage" in value for value in page_types)
     paywalled = any(str(node.get("isAccessibleForFree", "")).lower() == "false" for node in iter_json_ld(soup) if isinstance(node, dict))
     fallback_description = get_meta_content(soup, DESCRIPTION_META_NAMES)
-    text = extract_text_from_html(response.text, fallback_description=fallback_description)
+    text = extract_text_from_html(response.text, fallback_description=fallback_description, source_url=response.url or url)
     linked_pdf_url = ""
     if len(text) < config.EVIDENCE_MIN_CHARS and not is_listing:
         base = response.url or url

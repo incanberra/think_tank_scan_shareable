@@ -25,7 +25,7 @@ def badges(item, limit=3):
     rows = {r["topic"]: r for r in item.get("topic_classification", {}).get("topics", [])}
     confirmed = item.get("topic_confirmation", {})
     if confirmed.get("status") == "success":
-        rows = {r["topic"]: r for r in confirmed["topics"]}
+        rows.update({r["topic"]: r for r in confirmed["topics"]})
     tags = list(dict.fromkeys(t for t in item.get("tags", []) if t in PALETTE))
     tags.sort(key=lambda t: (rows.get(t, {}).get("role") != "central", -rows.get(t, {}).get("material_probability", 0)))
     pills = [dict(topic=t, label=PALETTE[t][0], background=PALETTE[t][1], foreground=PALETTE[t][2]) for t in tags[:limit]]

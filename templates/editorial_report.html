@@ -21,6 +21,7 @@
 <h2 class="story-title" style="font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:29px;line-height:1.2;margin:8px 0 16px">{{ item.title }}</h2>
 <p style="margin:0 0 14px">{% for pill in item.topic_pills %}<span style="display:inline-block;border-radius:999px;padding:4px 10px;margin:0 4px 5px 0;font: bold 11px/1.5 Arial,Helvetica,sans-serif;white-space:nowrap;background:{{ pill.background }};color:{{ pill.foreground }}">{{ pill.label }}</span>{% endfor %}{% if item.hidden_topic_count %}<span style="font-size:11px;color:#52616b">+{{ item.hidden_topic_count }} more</span>{% endif %}</p>
 <p class="meta" style="font-size:12px;color:#52616b">{{ item.author }} &nbsp; | &nbsp; Published {{ item.date or 'date unverified' }}{% if item.event_start_at %}<br>Event starts: {{ item.event_start_at }}{% endif %}</p>
+{% if item.topic_review_required %}<p class="meta" style="font-size:12px;color:#805321">Topic labels retained pending review.</p>{% endif %}
 <p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65;margin-bottom:5px">WHY IT MATTERS</p>
 <p class="why" style="font-size:17px;line-height:1.5;margin:6px 0 17px">{{ item.why_it_matters }}</p>
 <p style="font-size:14px;line-height:1.65">{{ item.summary }}</p>

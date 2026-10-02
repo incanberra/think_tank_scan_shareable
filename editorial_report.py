@@ -111,7 +111,7 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
                       p(item.get("summary"))])
         if item.get("event_start_at"):
             story.append(p("Event starts: " + item["event_start_at"], "small"))
-        story.append(p(f'Priority {item.get("importance_score", "—")} / 5  |  Relevance: {item.get("relevance_confidence", "unrated")}', "small"))
+        story.append(p(f'Priority {item.get("importance_score", "—")} / 5  |  Relevance: {item.get("relevance_confidence", "unrated")}' + ('  |  Topic labels await review' if item.get("topic_review_required") else ''), "small"))
         if item["url"]:
             story.append(Paragraph('<link href="' + html.escape(item["url"], quote=True) + '" color="#185e65">Read the original publication</link>', styles["body"]))
         story.extend([p("Publication evidence: " + str(item.get("publication_evidence_label")) + " | First discovered: " + str(item.get("first_seen_run_date", "Unknown")), "small"), HRFlowable(width="100%", color=line)])
