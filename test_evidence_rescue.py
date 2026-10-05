@@ -80,8 +80,8 @@ class RescueTests(unittest.TestCase):
         self.assertLessEqual(len(packet['full_text_excerpt']), 12000)
         self.assertLessEqual(len(packet['source_summary']), 1000)
         run = scan_runtime.ScanRun(self.root / 'reports', '2026-09-08')
-        decision = {'analyses': [{'temp_id': 0, 'needs_review': False, 'is_material_match': False,
-                                  'exclusion_reason': 'Not materially relevant'}]}
+        from test_review_improvements import negative_decision
+        decision = {'analyses': [negative_decision(reason='Not materially relevant')]}
         with patch.object(scan_runtime, 'current', return_value=run), \
              patch.object(config, 'OPENROUTER_API_KEY', 'test'), \
              patch.object(analyzer.ai_client, 'generate_json_with_retry', return_value=decision) as call:

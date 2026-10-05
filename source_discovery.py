@@ -12,6 +12,7 @@ import scan_runtime
 import http_client
 from seen_ledger import normalize_url
 import content_extractor
+import publication_dates
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -94,6 +95,10 @@ NOISY_PATH_TOKENS = [
 ]
 
 NOISY_PATH_SUFFIXES = {
+    "/cyber-effects-perspectives", "/mutual-evaluation-report-summaries",
+    "/research-event-recordings", "/event-summaries", "/martial-power-conferences",
+    "/business-leader-series", "/whitehall-briefings", "/invite-only",
+    "/conferences", "/open-to-all", "/future-leaders-forum",
     "/articles-multimedia",
     "/briefings-booktalks-and-conversations",
     "/calendar",
@@ -405,21 +410,18 @@ def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_ur
 
 
 def extract_date_near_anchor(anchor):
-    # Do not borrow an unrelated sibling's date or a listing-wide timestamp.
+    # Date-bearing cards may link image/title to the same article and author
+    # separately. Never borrow from a different article card or whole listing.
     for node in [anchor, anchor.parent, anchor.parent.parent if anchor.parent else None]:
         if node is None:
             continue
         links = {tag.get("href") for tag in node.find_all("a", href=True)}
         if len(links) > 1:
             break
-        times = node.find_all("time")
-        if len(times) == 1:
-            time_tag = times[0]
-            if "modified" in str(time_tag.get("itemprop", "")).lower():
-                continue
-            parsed = content_extractor.parse_date(time_tag.get("datetime") or time_tag.get_text(" ", strip=True))
-            if parsed:
-                return parsed
+        tags = node.select('time, [itemprop="datePublished"], .publication-date, .published-date')
+        parsed, _ = publication_dates.unique_date(tags, content_extractor.parse_date)
+        if parsed:
+            return parsed
     return None
 
 
@@ -618,4 +620,6 @@ def discover_search_only_sources(run_date_str, coverage_hours=48):
     """
     Backward-compatible wrapper for sources without working RSS feeds.
     """
-    return discover_native_sources(run_date_str, coverage_hours)
+    names = [source['name'] for source in config.DISCOVERY_SOURCES
+             if source['name'] in config.SEARCH_ONLY_THINK_TANKS or source.get('native_alongside_feed')]
+    return discover_native_sources(run_date_str, coverage_hours, source_names=names)

@@ -261,3 +261,47 @@ publication-date rules are preserved.
 
 Run `python -m unittest discover -v` for production regression checks, including
 the extraction boundaries, cache refresh and isolation of shadow topic proposals.
+
+### 5 October: grounded review and recovery
+
+Each displayed topic requires a concrete economic mechanism, a central/supporting
+role, and verbatim evidence from the retrieved body and supplied excerpt. Strict
+JSON responses are also validated locally. Invalid decisions get one repair attempt
+then are held. Keyword hints cannot fill missing model tags. The new prompt version
+invalidates old relevance decisions; cached decisions are revalidated.
+The report section and article-level quote list are derived from validated
+topic-level roles and quotes; the audit retains any differing model fields.
+
+Email, PDF and Markdown separate **Main brief** (central topic coverage) from
+**Further reading** (sustained supporting coverage). Jev remains on the separate
+shadow-test branch and does not drive these sections or production tags.
+
+RAND's verified publication feed supplements native discovery. Additional date
+checks cover FPRI article metadata, RAND publication labels/citation metadata,
+RUSI heading times and Hudson event dates. Event dates never become publication
+dates. Conflicting dates, years alone, URL dates and access dates remain unverified.
+Extraction cache schema 9 refreshes date results without clearing duplicate history.
+Validated version-8 bodies remain usable as stale fallbacks if the refresh is
+denied; versions 7 and earlier remain rejected. Date eligibility is still checked.
+
+Known category pages are filtered. Chatham House and IISS get at most two unpaid
+search queries after native discovery failures. Access denials and search failures
+remain visible; fallback cannot guarantee publisher access. Audits distinguish
+fetched pages with unknown dates from candidates deferred until their next retry.
+
+Providers returning unusable responses are excluded for the rest of the run using
+verified OpenRouter routing slugs. Failed batches get individual article retries.
+Explicit bibliography/endnote sections no longer consume the excerpt's ending
+allocation. Requests, usage and failures are saved as requests complete.
+
+Install the added `jsonschema` dependency from `requirements.txt`. Run
+`python -m unittest discover -v`. The first upgraded scan refreshes extracts and
+decisions. These checks improve traceability; matching quotes alone cannot prove
+that the model correctly interpreted an article. Delivery history is preserved.
+
+For `z-ai/glm-5.3-flash`, review prefers the verified Fireworks route, then Together,
+with OpenRouter fallback allowed and low reasoning effort. GLM requires reasoning;
+setting effort to `none` is rejected by the provider. Other model defaults remain
+unchanged. `REVIEW_PROVIDER_ORDER` (comma-separated routing slugs) and
+`REVIEW_REASONING_EFFORT` can override these review settings. Provider-specific rate
+limits are recorded and quarantined for the remainder of that run.

@@ -112,7 +112,8 @@ class WorkflowTests(unittest.TestCase):
         run.reprocess=True;self.assertIsNone(run.get_decision(item,'model'))
     def test_reordered_model_results_and_cache_avoid_repeat_calls(self):
         run=self.run_state();items=[publication(url=f'https://example.org/research/{i}',title=f'Research study {i}',extracted_text='Evidence '*100) for i in range(2)]
-        response={'analyses':[{'temp_id':1,'is_material_match':False,'exclusion_reason':'second reason'},{'temp_id':0,'is_material_match':False,'exclusion_reason':'first reason'}]}
+        from test_review_improvements import negative_decision
+        response={'analyses':[negative_decision(1,'second reason'),negative_decision(0,'first reason')]}
         with scan_runtime.activate(run),patch.object(config,'OPENROUTER_API_KEY','test'),patch.object(analyzer.ai_client,'generate_json_with_retry',return_value=response) as call:
             result=analyzer.analyze_items(copy.deepcopy(items),'test-model')
             self.assertEqual([i['exclusion_reason'] for i in result['excluded']],['first reason','second reason'])

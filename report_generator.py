@@ -319,6 +319,15 @@ Importance: {stars} - {rating_label}
 """
     return card
 
+def tiered_cards(items, date_label):
+    sections = []
+    for tier, label in (("main", "Main brief"), ("further_reading", "Further reading")):
+        rows = [i for i in items if i.get("editorial_tier", "main") == tier]
+        if rows:
+            sections.append("### " + label + "\n\n" + "\n\n---\n\n".join(format_markdown_card(i, date_label) for i in rows))
+    return "\n\n".join(sections)
+
+
 def generate_markdown(analyzed_data, run_date_str, status_notes, recall_audit=None):
     """
     Generates the Markdown report by populating the master template.
@@ -328,19 +337,19 @@ def generate_markdown(analyzed_data, run_date_str, status_notes, recall_audit=No
     recall_audit = sanitize_report_data(recall_audit)
     # 1. New Publications Cards
     if analyzed_data["reports"]:
-        pub_cards = "\n\n---\n\n".join([format_markdown_card(item, "Date") for item in analyzed_data["reports"]])
+        pub_cards = tiered_cards(analyzed_data["reports"], "Date")
     else:
         pub_cards = "*No qualifying items found in this coverage window.*"
         
     # 2. Podcast & Video Cards
     if analyzed_data["podcasts"]:
-        podcast_cards = "\n\n---\n\n".join([format_markdown_card(item, "Date") for item in analyzed_data["podcasts"]])
+        podcast_cards = tiered_cards(analyzed_data["podcasts"], "Date")
     else:
         podcast_cards = "*No qualifying items found in this coverage window.*"
         
     # 3. Event Cards
     if analyzed_data["events"]:
-        event_cards = "\n\n---\n\n".join([format_markdown_card(item, "Event Date") for item in analyzed_data["events"]])
+        event_cards = tiered_cards(analyzed_data["events"], "Event Date")
     else:
         event_cards = "*No qualifying items found in this coverage window.*"
         

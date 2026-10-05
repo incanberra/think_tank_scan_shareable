@@ -37,6 +37,12 @@ def context(data, date, audit=None):
             item["publication_evidence_label"] = ("Publisher publication metadata" if "metadata" in detail or "citation" in detail or detail == "page_publication"
                 else "Publication date displayed by publisher" if "visible" in detail else "Publisher feed publication date" if "rss" in detail or "atom" in detail else "See publication audit")
             items.append(item)
+    items.sort(key=lambda item: item.get("editorial_tier", "main") == "further_reading")
+    previous_tier = None
+    for item in items:
+        tier = item.get("editorial_tier", "main")
+        item["section_heading"] = ("Further reading" if tier == "further_reading" else "Main brief") if tier != previous_tier else ""
+        previous_tier = tier
     prior = int(meta.get("prior_delivered_today", 0))
     source_rows = audit.get("source_health", {}).get("sources", [])
     degraded = [r["source"] for r in source_rows if scan_runtime.source_state(r.get("status", "")) in {"degraded", "unavailable"}]
@@ -55,6 +61,8 @@ def context(data, date, audit=None):
             "headline": headline, "edition": "Supplement" if prior else "Daily edition", "prior": prior,
             "items": items, "count": len(items), "cutoff": cutoff, "run_id": meta.get("run_id", ""),
             "unknown": unknown, "degraded": degraded, "coverage_limited": bool(unknown or degraded),
+            "fetched_unknown": sum(r.get("fetched_date_unknown", 0) for r in source_rows),
+            "deferred": sum(r.get("pending_deferred", 0) for r in source_rows),
             "reviewed": analysis_metrics.get("sent_to_model", selection.get("selected_for_review", 0)),
             "cached": analysis_metrics.get("cache_hits", 0), "selected": selection.get("selected_for_review", 0),
             "repeats": reasons.get("skipped:already_reported", 0) + meta.get("metrics", {}).get("reported_removed_before_cap", 0),
@@ -81,6 +89,7 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
         "body": ParagraphStyle("body", fontName="Helvetica", fontSize=10, leading=15, textColor=ink, spaceAfter=10),
         "why": ParagraphStyle("why", fontName="Helvetica", fontSize=11, leading=16, textColor=ink, spaceAfter=11),
         "small": ParagraphStyle("small", fontName="Helvetica", fontSize=8, leading=12, textColor=muted, spaceAfter=7),
+        "section": ParagraphStyle("section", fontName="Helvetica-Bold", fontSize=16, leading=20, textColor=teal, spaceBefore=15, spaceAfter=12, keepWithNext=True),
         "label": ParagraphStyle("label", fontName="Helvetica-Bold", fontSize=8, leading=12, textColor=teal, spaceAfter=5),
     }
     def p(text, style="body"):
@@ -93,7 +102,11 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
     if c["coverage_limited"]:
         story.append(p("COVERAGE INCOMPLETE", "label"))
         story.append(p(f'{c["unknown"]} candidates have unverified publication dates. ' + ("Discovery issues: " + "; ".join(c["degraded"]) if c["degraded"] else ""), "small"))
+        if c["fetched_unknown"] or c["deferred"]:
+            story.append(p(f'{c["fetched_unknown"]} fetched pages lacked a verified date; {c["deferred"]} candidates await a scheduled retry.', "small"))
     for index, item in enumerate(c["items"], 1):
+        if item["section_heading"]:
+            story.append(p(item["section_heading"], "section"))
         story.extend([Spacer(1, 8), KeepTogether([p(f'{index:02d}  {item["category_label"].upper()}  /  {item.get("institution", "")}', "label"), p(item.get("title"), "title"), TopicPills(item["topic_pills"], item["hidden_topic_count"]),
                       p(f'{item.get("author", "")}  |  Published {item.get("date") or "Date unverified"}', "small"),
                       p("WHY IT MATTERS", "label"), p(item.get("why_it_matters"), "why")]),

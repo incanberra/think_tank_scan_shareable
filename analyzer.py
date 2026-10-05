@@ -15,6 +15,7 @@ from seen_ledger import normalize_url
 import eligibility
 import scan_runtime
 import evidence_selection
+import editorial_policy
 
 
 def normalize_title(title):
@@ -160,23 +161,11 @@ def clamp_score(value):
     return max(1, min(5, score))
 
 
-def fallback_tags(item):
-    hint_topics = [hint["topic"] for hint in item.get("topic_hints", [])]
-    return valid_topics(item.get("tags") or hint_topics) or hint_topics[:2]
-
-
 def compact_item_for_prompt(item, idx):
     """
     Builds the per-item evidence packet sent to the LLM.
     """
     text = item.get("extracted_text") or item.get("summary") or item.get("raw_summary") or ""
-    topic_hints = [
-        {
-            "topic": hint.get("topic"),
-            "matched_keywords": hint.get("matched_keywords", [])[:8],
-        }
-        for hint in (item.get("topic_hints") or [])[:5]
-    ]
     return {
         "temp_id": idx,
         "title": item.get("title") or item.get("extracted_title") or "",
@@ -197,7 +186,7 @@ def compact_item_for_prompt(item, idx):
         "extraction_status": item.get("extraction_status", "not_enriched"),
         "extracted_text_chars": item.get("extracted_text_chars", 0),
         "discovery_methods": item.get("discovery_methods") or [item.get("discovery_method", "unknown")],
-        "topic_hints": topic_hints,
+        "excerpt_is_partial": len(text) > config.LLM_ITEM_TEXT_CHAR_LIMIT,
         "source_summary": (item.get("summary") or item.get("raw_summary") or "")[:1000] if item.get("rescue_status") == "recovered" else item.get("summary") or item.get("raw_summary") or "",
         "full_text_excerpt": evidence_selection.excerpt(text, budget=min(config.LLM_ITEM_TEXT_CHAR_LIMIT, config.RESCUE_TEXT_CHAR_LIMIT) if item.get("rescue_status") == "recovered" else None),
         "rescue_evidence_url": item.get("rescue_evidence_url", ""),
@@ -218,7 +207,7 @@ Topic ontology. Choose matched_topics ONLY from this list, using the include/exc
 Candidate evidence packets:
 {json.dumps(batch_input, indent=2)}
 
-For EACH candidate, decide whether it is materially relevant to at least one topic. Use the full_text_excerpt when it is available. Topic hints are recall aids, not final judgments.
+For EACH candidate, decide whether it is materially relevant to at least one topic. Use the full_text_excerpt when it is available.
 
 Rules:
 1. Prefer recall when the evidence clearly relates to the ontology, but reject passing mentions, generic geopolitics, routine macro commentary, and items with no material economic-security angle.
@@ -226,7 +215,7 @@ Rules:
 3. Never override publication dates or prior-report history. Modification timestamps are not publication dates. Only events with a verified future event_start_at are eligible outside the publication window.
 4. Undated publications may be assessed for relevance, but are held for review and cannot appear as new publications. Do not invent dates.
 5. First-seen dates are discovery timestamps, not publication dates. Do not treat an unresolved date as a relevance rejection; date eligibility is enforced separately.
-6. Every included item must have 1-3 short evidence strings copied or closely paraphrased from the title, summary, or full text. Evidence should explain why it matched the topic set.
+6. {editorial_policy.POLICY}
 7. Summaries must be 2-4 sentences and grounded in the evidence packet. Do not invent details that are not supported by the packet.
 
 Return raw JSON only, with exactly one analysis for every input item. Copy each input temp_id into its result. Order is not significant:
@@ -239,13 +228,16 @@ Return raw JSON only, with exactly one analysis for every input item. Copy each 
       "title": "Cleaned title",
       "author": "Author(s) or speakers, or N/A",
       "matched_topics": ["Topic 1"],
+      "editorial_tier": "main",
+      "coverage_relationship": "central",
+      "topic_evidence": [{{"topic": "Topic 1", "role": "central", "mechanism": "Explain the specific economic mechanism", "quotes": ["Verbatim body quote at least 25 characters"]}}],
       "summary": "2-4 sentence evidence-grounded summary.",
       "why_it_matters": "1-2 sentence strategic relevance statement.",
       "importance_score": 3,
       "category": "report",
       "event_time": null,
       "relevance_confidence": "high",
-      "evidence": ["Short evidence point 1", "Short evidence point 2"],
+      "evidence": ["Verbatim body quote of at least 25 characters"],
       "exclusion_reason": "",
       "date_note": ""
     }}
@@ -256,8 +248,6 @@ Return raw JSON only, with exactly one analysis for every input item. Copy each 
 
 def make_final_item(orig_item, analysis):
     topics = valid_topics(analysis.get("matched_topics") or [])
-    if not topics:
-        topics = fallback_tags(orig_item)
 
     final_item = {
         "title": analysis.get("title") or orig_item.get("title") or orig_item.get("extracted_title"),
@@ -265,6 +255,9 @@ def make_final_item(orig_item, analysis):
         "date": orig_item.get("date") or orig_item.get("extracted_date") or "",
         "author": analysis.get("author") or orig_item.get("author") or orig_item.get("extracted_author") or "N/A",
         "tags": topics,
+        "editorial_tier": analysis["editorial_tier"],
+        "coverage_relationship": analysis["coverage_relationship"],
+        "topic_evidence": analysis["topic_evidence"],
         "summary": analysis.get("summary") or orig_item.get("summary") or "",
         "why_it_matters": analysis.get("why_it_matters") or "",
         "importance_score": clamp_score(analysis.get("importance_score")),
@@ -300,7 +293,7 @@ def make_final_item(orig_item, analysis):
 
 
 def make_exclusion_item(orig_item, analysis, reason_prefix=""):
-    reason = analysis.get("exclusion_reason") or "Not a material match to the configured economic-security topic set."
+    reason = analysis.get("exclusion_reason") or ("Insufficient evidence to establish relevance." if analysis.get("needs_review") else "Not a material match to the configured economic-security topic set.")
     if reason_prefix:
         reason = f"{reason_prefix}: {reason}"
     return {
@@ -343,29 +336,12 @@ def add_item_to_category(analyzed_data, item, category):
 
 
 def analyze_without_api(items):
-    print("[!] Warning: OPENROUTER_API_KEY not set. Keeping candidates as unreviewed recall items.")
-    analyzed_items = {
-        "reports": [],
-        "events": [],
-        "podcasts": [],
-        "excluded": [],
-        "needs_review": [],
-    }
-    for item in deduplicate_items(topic_utils.annotate_topic_hints(items)):
-        fallback_item = dict(item)
-        fallback_item["importance_score"] = fallback_item.get("importance_score", 3)
-        fallback_item["why_it_matters"] = "No API key configured for evidence-backed relevance review."
-        fallback_item["tags"] = fallback_tags(fallback_item)
-        fallback_item["relevance_confidence"] = "unreviewed"
-        fallback_item["evidence"] = [fallback_item.get("candidate_reason") or fallback_item.get("summary", "")[:200]]
-        category = fallback_item.get("item_type") or fallback_item.get("content_type_guess") or "report"
-        if fallback_item.get("date_status") == "verified_out_of_window" and category != "event":
-            analyzed_items["needs_review"].append(
-                make_exclusion_item(fallback_item, {"exclusion_reason": "Relevant candidate may be outside coverage window."})
-            )
-        else:
-            add_item_to_category(analyzed_items, fallback_item, category)
-    return analyzed_items
+    """Compatibility entry point: missing review cannot produce inclusions."""
+    data = {key: [] for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
+    for item in deduplicate_items(items):
+        data["needs_review"].append(make_exclusion_item(item, {
+            "needs_review": True, "exclusion_reason": "model_review_failed: no API key configured"}))
+    return data
 
 
 def analyze_items(items, override_model=None):
@@ -375,8 +351,10 @@ def analyze_items(items, override_model=None):
     request_start = len(getattr(run, "model_requests", []))
     unique_items = deduplicate_items(topic_utils.annotate_topic_hints(items))
     data = {key: [] for key in ("reports", "events", "podcasts", "excluded", "needs_review")}
+    data["validation_failures"] = []
+    data["editorial_normalizations"] = []
     metrics = {"selected_candidates": len(items), "unique_candidates": len(unique_items),
-               "cache_hits": 0, "sent_to_model": 0, "insufficient_evidence": 0}
+               "cache_hits": 0, "sent_to_model": 0, "insufficient_evidence": 0, "individual_recoveries": 0, "repair_attempts": 0}
     uncached = []
 
     def apply(item, analysis):
@@ -391,12 +369,12 @@ def analyze_items(items, override_model=None):
         add_item_to_category(data, make_final_item(item, analysis), category)
 
     for item in unique_items:
-        if item.get("evidence_quality") == "insufficient":
+        if item.get("evidence_quality") == "insufficient" or not str(item.get("extracted_text") or "").strip() or item.get("paywall_detected"):
             data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "insufficient_evidence"}))
             metrics["insufficient_evidence"] += 1
             continue
         cached = run.get_decision(item, model) if run else None
-        if cached:
+        if cached and not editorial_policy.validation_error(item, cached):
             item["decision_cache_status"] = "hit"
             metrics["cache_hits"] += 1
             apply(item, cached)
@@ -414,42 +392,85 @@ def analyze_items(items, override_model=None):
     rescued = [item for item in uncached if item.get("rescue_status") == "recovered"]
     metrics["rescued_sent_to_model"] = len(rescued)
     batches = [ordinary[i:i + batch_size] for i in range(0, len(ordinary), batch_size)] + [[item] for item in rescued]
+    def request(batch, purpose="relevance", repair_error=""):
+        prompt = build_analysis_prompt(batch)
+        if repair_error:
+            prompt += "\nYour previous decision failed validation: " + repair_error + ". Reassess using only the supplied body; drop unsupported topics or set needs_review."
+        return ai_client.generate_json_with_retry(model=model,
+            messages=[{"role": "user", "content": prompt}], max_retries=1 if repair_error else 2,
+            max_tokens=1600 if purpose == "evidence_rescue" else max(2400, len(batch) * 2000),
+            purpose=purpose, response_schema=editorial_policy.response_schema())
+
+    def rows_by_id(result, batch):
+        rows = result.get("analyses", []) if isinstance(result, dict) else []
+        by_id, duplicate = {}, set()
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            index = row.get("temp_id")
+            if type(index) is not int or not 0 <= index < len(batch):
+                continue
+            if index in by_id:
+                duplicate.add(index)
+            by_id[index] = row
+        return {i: row for i, row in by_id.items() if i not in duplicate}
+
+    def finish(item, row):
+        prepared = editorial_policy.derive_editorial_fields(row, item)
+        if prepared != row:
+            data["editorial_normalizations"].append({"url": item.get("url"), "model_decision": row,
+                "reason": "Derived section and article evidence from topic roles; discarded unsupported individual quotes. Original model fields retained here."})
+        row = prepared
+        error = editorial_policy.validation_error(item, row)
+        if error:
+            data["validation_failures"].append({"url": item.get("url"), "stage": "initial", "error": error, "decision": row})
+            metrics["repair_attempts"] += 1
+            try:
+                row = rows_by_id(request([item], "schema_repair", error), [item]).get(0)
+                row = editorial_policy.derive_editorial_fields(row, item)
+                error = editorial_policy.validation_error(item, row)
+            except Exception as exc:
+                error = str(exc)[:160]
+            if error:
+                data["validation_failures"].append({"url": item.get("url"), "stage": "repair", "error": error, "decision": row})
+                data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_response_invalid: " + error}))
+                return
+        item["decision_cache_status"] = "miss"
+        if run and not row.get("needs_review"):
+            run.cache_decision(item, model, row)
+        apply(item, row)
+
     for batch_index, batch in enumerate(batches):
         print(f"[*] Reviewing relevance batch {batch_index + 1}/{len(batches)} ({len(batch)} candidates)...")
         metrics["sent_to_model"] += len(batch)
-        before_batch = {key: len(data[key]) for key in data}
+        purpose = "evidence_rescue" if batch[0].get("rescue_status") == "recovered" else "relevance"
         try:
-            options = {"max_retries": 2, "max_tokens": 1600, "purpose": "evidence_rescue"} if batch[0].get("rescue_status") == "recovered" else {}
-            result = ai_client.generate_json_with_retry(model=model, messages=[{"role": "user", "content": build_analysis_prompt(batch)}], **options)
-            analyses = result.get("analyses", []) if isinstance(result, dict) else result
-            by_id = {}
-            duplicate_ids = set()
-            for row in analyses if isinstance(analyses, list) else []:
-                if not isinstance(row, dict):
-                    continue
-                index = row.get("temp_id")
-                if type(index) is not int or index < 0 or index >= len(batch):
-                    continue
-                if index in by_id:
-                    duplicate_ids.add(index)
-                by_id[index] = row
-            for index, item in enumerate(batch):
-                row = by_id.get(index)
-                valid = (row and index not in duplicate_ids and type(row.get("is_material_match")) is bool
-                         and type(row.get("needs_review", False)) is bool
-                         and (not row.get("is_material_match") or isinstance(row.get("evidence"), list) and bool(row["evidence"])))
-                if not valid:
-                    data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_response_invalid: missing, duplicate or invalid candidate decision"}))
-                    continue
-                item["decision_cache_status"] = "miss"
-                if run and not row.get("needs_review"):
-                    run.cache_decision(item, model, row)
-                apply(item, row)
+            by_id = rows_by_id(request(batch, purpose), batch)
         except Exception as exc:
-            for key, count in before_batch.items():
-                del data[key][count:]
+            if any(code in str(exc) for code in ("OpenRouter HTTP 400", "OpenRouter HTTP 401", "OpenRouter HTTP 402", "OpenRouter HTTP 403")):
+                # Splitting cannot repair invalid credentials, unavailable
+                # credit or an unsupported request schema.
+                for item in batch:
+                    data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_review_failed: " + str(exc)[:160]}))
+                continue
+            if len(batch) == 1:
+                data["needs_review"].append(make_exclusion_item(batch[0], {"exclusion_reason": "model_review_failed: " + str(exc)[:160]}))
+                continue
+            # Recover each item independently after a transport/batch failure.
             for item in batch:
-                data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": f"model_review_failed: {str(exc)[:160]}"}))
+                try:
+                    result = rows_by_id(request([item], "individual_recovery"), [item])
+                    finish(item, result.get(0))
+                    metrics["individual_recoveries"] += 1
+                except Exception as individual_exc:
+                    data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_review_failed: " + str(individual_exc)[:160]}))
+            if run:
+                run.save_manifest("running")
+            continue
+        for index, item in enumerate(batch):
+            finish(item, by_id.get(index))
+        if run:
+            run.save_manifest("running")
         if batch_index + 1 < len(batches):
             time.sleep(2)
     for category in ("reports", "events", "podcasts"):

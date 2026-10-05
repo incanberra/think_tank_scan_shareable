@@ -6,6 +6,24 @@ import random
 import re
 import config
 
+# Verified against OpenRouter's model endpoint metadata. Unknown providers are
+# resolved on demand rather than guessing a routing slug from a display name.
+PROVIDER_SLUGS = {"Z.AI": "z-ai", "Together": "together", "Fireworks": "fireworks"}
+
+def provider_slug(name, model):
+    if name in PROVIDER_SLUGS:
+        return PROVIDER_SLUGS[name]
+    try:
+        response = requests.get("https://openrouter.ai/api/v1/models/" + model + "/endpoints", timeout=10)
+        response.raise_for_status()
+        for endpoint in response.json().get("data", {}).get("endpoints", []):
+            slug = (endpoint.get("tag") or "").split("/")[0]
+            if slug:
+                PROVIDER_SLUGS[endpoint.get("provider_name")] = slug
+    except (requests.RequestException, ValueError):
+        pass
+    return PROVIDER_SLUGS.get(name)
+
 def get_openrouter_model(override_model=None):
     """
     Returns the OpenRouter model to use. Defaults to CLI argument override, 
@@ -70,7 +88,7 @@ def generate_content_with_retry(model, messages, max_retries=5, initial_delay=3)
             else:
                 raise e
 
-def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, max_tokens=None, purpose="relevance"):
+def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, max_tokens=None, purpose="relevance", provider_options=None, response_schema=None):
     """Bounded JSON review requests with auditable routing and transport retries."""
     import scan_runtime
     if not config.OPENROUTER_API_KEY:
@@ -78,6 +96,25 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
     payload = {"model": model or config.OPENROUTER_MODEL, "messages": messages,
                "temperature": 0.1, "response_format": {"type": "json_object"},
                "provider": {"require_parameters": True}}
+    payload["provider"].update(provider_options or {})
+    payload["provider"]["require_parameters"] = True
+    # GLM 5.3 requires reasoning. Its verified Fireworks route supports strict
+    # outputs; low effort bounds overhead for this evidence classification task.
+    default_order = "fireworks,together" if payload["model"] == "z-ai/glm-5.3-flash" else ""
+    order = [p.strip() for p in os.getenv("REVIEW_PROVIDER_ORDER", default_order).split(",") if p.strip()]
+    if order:
+        payload["provider"].setdefault("order", order)
+    effort = os.getenv("REVIEW_REASONING_EFFORT", "low" if default_order else "")
+    if effort in {"none", "minimal", "low", "medium", "high"}:
+        payload["reasoning"] = {"effort": effort}
+    if response_schema:
+        payload["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "article_decisions", "strict": True, "schema": response_schema}}
+    failed_providers = set()
+    if run := scan_runtime.current():
+        previous_failures = getattr(run, "failed_review_providers", set())
+        if isinstance(previous_failures, (set, list, tuple)):
+            failed_providers.update(previous_failures)
     headers = {"Authorization": "Bearer " + config.OPENROUTER_API_KEY,
                "Content-Type": "application/json", "X-Title": "Think Tanks Scanner"}
     if max_tokens is not None:
@@ -85,8 +122,10 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
     run = scan_runtime.current()
     delay = initial_delay
     for attempt in range(max_retries):
+        if failed_providers:
+            payload["provider"]["ignore"] = sorted(set((provider_options or {}).get("ignore", [])) | failed_providers)
         started = time.monotonic()
-        record = {"requested_model": payload["model"], "attempt": attempt + 1, "purpose": purpose}
+        record = {"requested_model": payload["model"], "attempt": attempt + 1, "purpose": purpose, "ignored_providers": list(payload["provider"].get("ignore", [])), "response_format": payload["response_format"]["type"], "provider_order": payload["provider"].get("order", []), "reasoning_effort": effort}
         transient = False
         try:
             response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -94,6 +133,13 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
             record["http_status"] = response.status_code
             if response.status_code != 200:
                 transient = response.status_code in {408, 429, 500, 502, 503, 504}
+                try:
+                    failure = response.json()
+                    metadata = failure.get("error", {}).get("metadata", {}) if isinstance(failure, dict) else {}
+                    if isinstance(metadata, dict):
+                        record.update(provider=metadata.get("provider_name"), limit_source=metadata.get("limit_source"))
+                except ValueError:
+                    pass
                 raise RuntimeError(f"OpenRouter HTTP {response.status_code}")
             result = response.json()
             choice = (result.get("choices") or [{}])[0]
@@ -113,6 +159,14 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
             return data
         except (requests.RequestException, ValueError, RuntimeError) as exc:
             transient = transient or isinstance(exc, (requests.Timeout, requests.ConnectionError, ValueError))
+            # Quarantine a provider returning unusable output for this run only.
+            if (isinstance(exc, ValueError) or transient) and record.get("provider"):
+                slug = provider_slug(record["provider"], payload["model"])
+                record["failed_provider_slug"] = slug
+                if slug:
+                    failed_providers.add(slug)
+                if run:
+                    run.failed_review_providers = set(failed_providers)
             record.update(status="failed", error=type(exc).__name__ + ": " + str(exc)[:160])
             if not transient or attempt + 1 == max_retries:
                 raise
@@ -123,5 +177,6 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
                 if not hasattr(run, "model_requests"):
                     run.model_requests = []
                 run.model_requests.append(record)
+                run.save_manifest("running")
         time.sleep(min(delay, 30) + random.uniform(0, 1))
         delay *= 2

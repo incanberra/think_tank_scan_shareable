@@ -6,3 +6,4 @@ reportlab
 jinja2
 requests
 pypdf
+jsonschema

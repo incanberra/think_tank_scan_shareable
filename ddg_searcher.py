@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 import config
+import source_discovery
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -28,6 +29,9 @@ def clean_result_url(href):
     return url_str.split("#")[0].strip()
 
 
+SEARCH_FAILURES = {}
+
+
 def search_ddg_html(query, max_results=None):
     """
     Queries DuckDuckGo HTML search and parses the results.
@@ -36,15 +40,19 @@ def search_ddg_html(query, max_results=None):
     url = "https://html.duckduckgo.com/html/"
     data = {"q": query}
     results = []
+    SEARCH_FAILURES.pop(query, None)
 
     try:
         response = requests.post(url, headers=HEADERS, data=data, timeout=20, verify=False)
         if response.status_code != 200:
+            SEARCH_FAILURES[query] = f"HTTP {response.status_code}"
             print(f"    [-] DDG HTML query failed with status code {response.status_code}")
             return []
 
         soup = BeautifulSoup(response.content, "html.parser")
         result_divs = soup.find_all("div", class_="result")
+        if not result_divs and any(w in response.text.lower() for w in ("anomaly", "challenge", "captcha")):
+            SEARCH_FAILURES[query] = "bot challenge"
 
         for div in result_divs:
             title_tag = div.find("a", class_="result__a")
@@ -69,6 +77,7 @@ def search_ddg_html(query, max_results=None):
                 break
         return results
     except Exception as exc:
+        SEARCH_FAILURES[query] = str(exc)[:100]
         print(f"    [-] DDG HTML scraping exception: {exc}")
         return []
 
@@ -123,15 +132,19 @@ def search_think_tanks_via_ddg(run_date_str, coverage_hours=48, source_names=Non
         source_count = 0
         print(f"[*] DDG source {source_idx}/{len(search_sources)}: {institution} ({domain})")
 
-        for group_idx, terms in enumerate(config.SEARCH_QUERY_GROUPS, 1):
+        failures = []
+        query_groups = config.SEARCH_QUERY_GROUPS[:source.get("fallback_query_limit", len(config.SEARCH_QUERY_GROUPS))]
+        for group_idx, terms in enumerate(query_groups, 1):
             query = build_source_query(domain, terms)
             print(f"    [*] Query group {group_idx}/{len(config.SEARCH_QUERY_GROUPS)}")
             raw_results = search_ddg_html(query)
+            if query in SEARCH_FAILURES:
+                failures.append(SEARCH_FAILURES[query])
             print(f"    [+] DDG returned {len(raw_results)} results.")
 
             for item in raw_results:
                 url_lower = item["url"].lower()
-                if domain.lower() not in url_lower:
+                if not source_discovery.is_same_domain(item["url"], domain) or source_discovery.native_rejection_reason(item["url"], item["title"]):
                     continue
 
                 key = item["url"].rstrip("/").lower()
@@ -159,7 +172,7 @@ def search_think_tanks_via_ddg(run_date_str, coverage_hours=48, source_names=Non
                     candidates_by_key[key] = candidate
                     source_count += 1
 
-            if group_idx < len(config.SEARCH_QUERY_GROUPS):
+            if group_idx < len(query_groups):
                 time.sleep(config.DDG_SEARCH_DELAY_SECONDS)
 
         status_notes[institution] = (
@@ -167,6 +180,8 @@ def search_think_tanks_via_ddg(run_date_str, coverage_hours=48, source_names=Non
             if source_count
             else "checked/no raw candidates"
         )
+        if failures:
+            status_notes[institution] += "; search failed: " + "; ".join(failures)
 
     discovered_items = list(candidates_by_key.values())
     print(f"[+] DuckDuckGo search scan finished. Discovered {len(discovered_items)} unique raw candidates.")

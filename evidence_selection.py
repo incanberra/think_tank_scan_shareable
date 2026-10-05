@@ -7,6 +7,11 @@ TERMS = re.compile(r"sanction|export control|supply.chain|ownership|acquisition|
 
 def excerpt(text, budget=None):
     budget = budget or config.LLM_ITEM_TEXT_CHAR_LIMIT
+    # Do not spend the ending allocation on a bibliography. Only an explicit
+    # standalone heading after substantive prose establishes this boundary.
+    boundary = re.search(r'(?im)^\s*(?:bibliography|references|endnotes)\s*:?\s*$', text)
+    if boundary and boundary.start() >= 600:
+        text = text[:boundary.start()].rstrip()
     if len(text) <= budget:
         return text
     # Reserve the conclusion before selecting topic-rich passages in the middle.
@@ -23,4 +28,4 @@ def excerpt(text, budget=None):
         selected[i] = chunks[i][:available]
         available -= len(selected[i]) + 2
     body = "\n\n".join(selected[i] for i in sorted(selected))
-    return ("[Article opening]\n" + head + "\n\n[Selected middle sections]\n" + body + "\n\n[Article conclusion]\n" + tail)[:budget]
+    return ("[Article opening]\n" + head + "\n\n[Selected middle sections]\n" + body + "\n\n[Article ending]\n" + tail)[:budget]

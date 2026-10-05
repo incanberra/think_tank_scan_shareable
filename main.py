@@ -163,7 +163,7 @@ def stage_discover(run_date_str):
     rss_failed_sources = [
         source
         for source, status in rss_status.items()
-        if "failed" in str(status).lower()
+        if "failed" in str(status).lower() and source not in native_status
     ]
     native_fallback_items = []
     native_fallback_status = {}
@@ -178,27 +178,21 @@ def stage_discover(run_date_str):
 
     search_items = []
     search_status = {}
-    if config.ENABLE_DDG_FALLBACK:
-        native_sources_with_items = {item.get("institution") for item in native_items}
-        ddg_sources = [
-            source
-            for source in config.SEARCH_ONLY_THINK_TANKS
-            if source not in native_sources_with_items
-        ]
-        if ddg_sources:
-            print(f"[*] DDG fallback enabled for {len(ddg_sources)} sources without native candidates.")
-            search_items, search_status = ddg_searcher.search_think_tanks_via_ddg(
-                run_date_str,
-                config.COVERAGE_WINDOW_HOURS,
-                source_names=ddg_sources,
-            )
-        else:
-            print("[*] DDG fallback enabled but all search-only sources had native candidates.")
-    else:
-        print("[*] DDG fallback disabled. Set ENABLE_DDG_FALLBACK=true to enable unpaid DDG fallback.")
+    native_sources_with_items = {item.get("institution") for item in native_items}
+    ddg_sources = [source["name"] for source in config.DISCOVERY_SOURCES
+        if source["name"] not in native_sources_with_items and (
+            config.ENABLE_DDG_FALLBACK and source["name"] in config.SEARCH_ONLY_THINK_TANKS
+            or source.get("blocked_search_fallback") and any(word in native_status.get(source["name"], "").lower()
+                for word in ("403", "failed", "error")))]
+    if ddg_sources:
+        print(f"[*] Running bounded search fallback for {len(ddg_sources)} sources with discovery gaps.")
+        search_items, search_status = ddg_searcher.search_think_tanks_via_ddg(
+            run_date_str, config.COVERAGE_WINDOW_HOURS, source_names=ddg_sources)
 
     raw_candidates = rss_items + native_items + native_fallback_items + search_items
     status_notes = {**rss_status, **native_status}
+    for source in set(rss_status) & set(native_status):
+        status_notes[source] = rss_status[source] + "; native " + native_status[source]
     for source, status in native_fallback_status.items():
         rss_note = status_notes.get(source)
         status_notes[source] = f"{rss_note}; native fallback {status}" if rss_note else status

@@ -119,13 +119,17 @@ def load_cache_entry(url):
     try:
         with open(path, "r", encoding="utf-8") as handle:
             entry = json.load(handle)
-            # Refetch older extraction results: they may contain duplicate or related article text.
-            return entry if entry.get("schema_version") == 8 else None
+            # Version 8 has validated body extraction. Refetch its dates, but
+            # retain that body as a fallback if the publisher now denies access.
+            # Earlier versions can contain unrelated or duplicated article text.
+            return entry if entry.get("schema_version") in {8, 9} else None
     except Exception:
         return None
 
 
 def cache_entry_is_fresh(entry):
+    if not entry or entry.get('schema_version') != 9:
+        return False
     saved_at = parse_cached_datetime(entry.get("cache_saved_at") if entry else "")
     if not saved_at:
         return False
@@ -153,7 +157,7 @@ def write_cache_entry(request_url, page_data, response_headers=None):
     if page_data.get("canonical_url"):
         page_data["canonical_url"] = resolve_canonical_url(page_data["canonical_url"], page_data.get("resolved_url") or request_url)
     entry = {
-        "schema_version": 8,
+        "schema_version": 9,
         "request_url": request_url,
         "canonical_url": page_data.get("canonical_url") or request_url,
         "cache_saved_at": utc_now_iso(),
@@ -775,7 +779,7 @@ def extract_page(url, timeout=20, force_refresh=False):
         return page_data_from_cache(cached_entry, "hit_fresh")
 
     headers = dict(HEADERS)
-    if cached_entry:
+    if cached_entry and cached_entry.get('schema_version') == 9:
         if cached_entry.get("etag"):
             headers["If-None-Match"] = cached_entry["etag"]
         if cached_entry.get("last_modified"):
@@ -846,6 +850,8 @@ def extract_page(url, timeout=20, force_refresh=False):
     event_start_raw = json_ld.get("event_start") or get_meta_content(soup, ["startDate"])
     event_start = parse_date(event_start_raw)
     event_end = parse_date(json_ld.get("event_end"))
+    if not event_start:
+        event_start, event_end, event_start_raw = publication_dates.event_dates(soup, response.url or url, parse_date)
     page_types = {str(node.get("@type", "")).lower() for node in iter_json_ld(soup) if isinstance(node, dict)}
     is_listing = any("collectionpage" in value for value in page_types)
     paywalled = any(str(node.get("isAccessibleForFree", "")).lower() == "false" for node in iter_json_ld(soup) if isinstance(node, dict))
@@ -884,7 +890,7 @@ def extract_page(url, timeout=20, force_refresh=False):
         "is_listing_page": is_listing,
         "event_start_at": event_start.isoformat() if event_start else "",
         "event_end_at": event_end.isoformat() if event_end else "",
-        "event_start_precision": "date" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(event_start_raw or "")) else "datetime",
+        "event_start_precision": "date" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(event_start_raw or "")) or (event_start_raw and not json_ld.get("event_start") and not get_meta_content(soup, ["startDate"])) else "datetime",
         "modified_at": (modified_dt or weak_date_dt).isoformat() if (modified_dt or weak_date_dt) else "",
         "modified_date_source": "page_modified" if modified_dt else "http_last_modified" if weak_date_dt else "",
         "extracted_title": title,

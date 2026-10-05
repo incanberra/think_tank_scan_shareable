@@ -20,7 +20,7 @@ import config
 from state_storage import atomic_json_write
 
 _active = ContextVar("scanner_run", default=None)
-PROMPT_VERSION = "economic-security-v4-evidence-sections"
+PROMPT_VERSION = "economic-security-v5-topic-quotes-tiers"
 RETRY_REASONS = {"publication_date_unverified", "date_unknown_seen_before_skipped",
                  "event_date_unverified", "insufficient_evidence", "source_review_cap",
                  "model_review_failed", "model_response_invalid", "publication_date_conflict"}

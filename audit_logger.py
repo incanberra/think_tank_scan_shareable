@@ -96,6 +96,8 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
     date_unknown_by_source = defaultdict(int)
     extraction_fail_by_source = defaultdict(int)
     extraction_ok_by_source = defaultdict(int)
+    pending_deferred_by_source = defaultdict(int)
+    fetched_date_unknown_by_source = defaultdict(int)
 
     failing_extraction_statuses = {
         "fetch_failed",
@@ -121,6 +123,10 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
         if item.get("date_status") == "date_unknown":
             date_unknown_by_source[source] += 1
         extraction_status = item.get("extraction_status")
+        if item.get("pending_waiting"):
+            pending_deferred_by_source[source] += 1
+        elif extraction_status == "ok" and item.get("date_status") == "date_unknown":
+            fetched_date_unknown_by_source[source] += 1
         if extraction_status == "ok":
             extraction_ok_by_source[source] += 1
         elif extraction_status in failing_extraction_statuses:
@@ -169,6 +175,8 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
                 "extraction_failures": extraction_failures,
                 "items_without_text": no_text,
                 "date_unknown": date_unknown,
+                "pending_deferred": pending_deferred_by_source.get(source, 0),
+                "fetched_date_unknown": fetched_date_unknown_by_source.get(source, 0),
                 "text_gap_rate": round(no_text / enriched_count, 3) if enriched_count else None,
                 "date_unknown_rate": round(date_unknown / enriched_count, 3) if enriched_count else None,
             }
@@ -381,6 +389,8 @@ def save_analysis_audit(output_dir, run_date_str, model_slug, analyzed_data):
         "model": model_slug,
         "run_id": scan_runtime.current().run_id if scan_runtime.current() else "",
         "analysis_metrics": analyzed_data.get("analysis_metrics", {}),
+        "validation_failures": analyzed_data.get("validation_failures", []),
+        "editorial_normalizations": analyzed_data.get("editorial_normalizations", []),
         "included": [dict(item, category=category) for category in ("reports", "podcasts", "events") for item in analyzed_data.get(category, [])],
         "included_counts": {
             "reports": len(analyzed_data.get("reports", [])),
