@@ -310,6 +310,9 @@ def map_item_for_json(item):
         "url": item["url"],
     }
     optional_fields = [
+        "editorial_tier",
+        "coverage_relationship",
+        "topic_evidence",
         "rescue_status",
         "rescue_evidence_url",
         "publication_date_source_detail",

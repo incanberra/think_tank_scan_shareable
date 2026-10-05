@@ -207,6 +207,14 @@ class ReviewImprovements(unittest.TestCase):
             text=''.join(p.extract_text() for p in PdfReader(path).pages)
             self.assertIn('Main brief',text);self.assertIn('Further reading',text)
 
+    def test_saved_report_preserves_section_and_topic_evidence(self):
+        import main
+        item=analyzer.make_final_item(self.item(),positive_decision(role='supporting'))
+        saved=main.map_item_for_json(item)
+        self.assertEqual(saved['editorial_tier'],'further_reading')
+        self.assertEqual(saved['coverage_relationship'],'sustained_support')
+        self.assertEqual(saved['topic_evidence'],item['topic_evidence'])
+
     def test_search_challenge_is_a_failure(self):
         response=Mock(status_code=200,text='<html>captcha challenge</html>',content=b'<html>captcha challenge</html>')
         with patch.object(ddg_searcher.requests,'post',return_value=response):
