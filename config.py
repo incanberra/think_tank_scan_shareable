@@ -83,6 +83,11 @@ THINK_TANKS = [
     "Institute for the Study of War (ISW)",
     "War on the Rocks",
     "National Bureau of Economic Research (NBER)",
+    "Peterson Institute for International Economics (PIIE)",
+    "Bruegel",
+    "Mercator Institute for China Studies (MERICS)",
+    "Economic Research Institute for ASEAN and East Asia (ERIA)",
+    "ISEAS–Yusof Ishak Institute",
 ]
 
 # Source registry used by v3 discovery and audit logic. RSS-capable sources keep
@@ -238,6 +243,37 @@ DISCOVERY_SOURCES = [
         "methods": ["rss", "page_extract"],
     },
 ]
+
+# Official, server-rendered publication indexes verified on 14 October 2026.
+# Restrict these sources to detail routes, avoiding people/programme/category pages.
+DISCOVERY_SOURCES.extend([
+    {"name": "Peterson Institute for International Economics (PIIE)",
+     "domain": "piie.com", "base_url": "https://www.piie.com/",
+     "index_paths": ["/research", "/blogs/realtime-economics"],
+     "content_path_patterns": [r"^/(?:publications/[^/]+|blogs/realtime-economics|research/piie-charts)/\d{4}/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+    {"name": "Bruegel", "domain": "bruegel.org", "base_url": "https://www.bruegel.org/",
+     "index_paths": ["/publications"],
+     "content_path_patterns": [r"^/(?:analysis|policy-brief|working-paper|report|memo|essay|external-publication)/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+    {"name": "Mercator Institute for China Studies (MERICS)",
+     "domain": "merics.org", "base_url": "https://merics.org/",
+     "index_paths": ["/en/analysis", "/en/industrial-policy-and-technology"],
+     "content_path_patterns": [r"^/en/(?:report|comment|merics-briefs|short-analysis)/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+    {"name": "Economic Research Institute for ASEAN and East Asia (ERIA)",
+     "domain": "eria.org", "base_url": "https://www.eria.org/",
+     "index_paths": ["/publications"],
+     "content_path_patterns": [r"^/publications/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+    {"name": "ISEAS–Yusof Ishak Institute", "domain": "iseas.edu.sg",
+     "base_url": "https://www.iseas.edu.sg/",
+     "index_paths": ["/articles-commentaries/iseas-perspective/",
+                     "/category/articles-commentaries/iseas-economics-working-papers/",
+                     "/category/articles-commentaries/trends-in-southeast-asia/trends-in-southeast-asia-2026/"],
+     "content_path_patterns": [r"^/articles-commentaries/(?:iseas-perspective|iseas-economics-working-papers|trends-in-southeast-asia)/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+])
 
 DISABLED_THINK_TANKS = {
     name.strip()

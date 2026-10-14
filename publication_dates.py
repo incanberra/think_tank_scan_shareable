@@ -41,6 +41,26 @@ def event_dates(soup, url, parse_date):
 
 def extract(soup, url, parse_date):
     host = (urlparse(url).hostname or "").removeprefix("www.")
+    if host == 'iseas.edu.sg':
+        date, value = unique_date(soup.select('meta[name="citation_publication_date"]'), parse_date)
+        if date:
+            return date, 'iseas_citation_publication_date', value
+    if host == 'bruegel.org':
+        labels = soup.select('.c-single-header__meta-row dt')
+        tags = [tag.find_next_sibling('dd') for tag in labels
+                if tag.get_text(' ', strip=True).casefold() == 'publishing date']
+        date, value = unique_date([tag for tag in tags if tag is not None], parse_date)
+        if date:
+            return date, 'bruegel_visible_publication_date', value
+    if host == 'merics.org':
+        # Related-article dates occur elsewhere in the layout. Restrict the
+        # published field to the heading's own left-hand region.
+        heading = soup.find('h1')
+        region = heading.find_parent(class_='layout__region--left') if heading else None
+        if region:
+            date, value = unique_date(region.select('.field-name-field-date-published time'), parse_date)
+            if date:
+                return date, 'merics_visible_publication_date', value
     if host in {'rand.org', 'fpri.org', 'rusi.org', 'hudson.org'}:
         # Citation publication metadata is explicit; citation years alone do not
         # give enough precision to establish a daily publication window.

@@ -202,7 +202,11 @@ def is_same_domain(url, domain):
 
 
 def looks_like_content_url(url):
-    path = urlparse(url).path.lower()
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    for source in config.DISCOVERY_SOURCES:
+        if source.get("content_path_patterns") and is_same_domain(url, source['domain']):
+            return any(re.fullmatch(pattern, path) for pattern in source['content_path_patterns'])
     return any(hint in path for hint in CONTENT_PATH_HINTS)
 
 
@@ -211,6 +215,10 @@ def native_rejection_reason(url, title="", allow_dated_listing=False):
     path = (parsed.path or "/").lower().rstrip("/") or "/"
     title_key = re.sub(r"\s+", " ", str(title or "").strip().lower())
     query_keys = {key.lower() for key, _value in parse_qsl(parsed.query, keep_blank_values=True)}
+
+    for source in config.DISCOVERY_SOURCES:
+        if source.get('content_path_patterns') and is_same_domain(url, source['domain']) and not looks_like_content_url(url):
+            return 'native_rejected_non_content_path'
 
     if path.endswith(".xml") or "sitemap" in path:
         return "native_rejected_sitemap_xml"
