@@ -198,14 +198,14 @@ class ReviewImprovements(unittest.TestCase):
         main=analyzer.make_final_item(self.item(),positive_decision());further=analyzer.make_final_item(self.item(),positive_decision(role='supporting'))
         data={'reports':[further,main],'podcasts':[],'events':[]}
         html=editorial_report.generate_html(data,'2026-10-05',{})
-        self.assertLess(html.index('Main brief'),html.index('Further reading'))
+        self.assertLess(html.index('Priority reading'),html.index('Further reading'))
         md=report_generator.generate_markdown(data,'2026-10-05',{})
         self.assertIn('Main brief',md);self.assertIn('Further reading',md)
         with tempfile.TemporaryDirectory() as temp:
             path=str(Path(temp)/'report.pdf');editorial_report.generate_pdf(data,'2026-10-05',{},path)
             from pypdf import PdfReader
             text=''.join(p.extract_text() for p in PdfReader(path).pages)
-            self.assertIn('Main brief',text);self.assertIn('Further reading',text)
+            self.assertIn('Priority reading',text);self.assertIn('Further reading',text)
 
     def test_saved_report_preserves_section_and_topic_evidence(self):
         import main

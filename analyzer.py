@@ -216,7 +216,7 @@ Rules:
 4. Undated publications may be assessed for relevance, but are held for review and cannot appear as new publications. Do not invent dates.
 5. First-seen dates are discovery timestamps, not publication dates. Do not treat an unresolved date as a relevance rejection; date eligibility is enforced separately.
 6. {editorial_policy.POLICY}
-7. Summaries must be 2-4 sentences and grounded in the evidence packet. Do not invent details that are not supported by the packet.
+7. Reader presentation: write a clear, informative title of roughly 8-12 words, preserving the article's meaning. Write why_it_matters as one direct sentence, ideally at most 35 words, stating the strategic economic implication. Write the summary as exactly two complete sentences, ideally 55-75 words, covering the finding and mechanism without repeating the title or why_it_matters. These are presentation requirements, not additional relevance criteria. Ground every claim in the evidence packet; do not invent details, exaggerate significance or imply a think tank's proposal is an established fact.
 
 Return raw JSON only, with exactly one analysis for every input item. Copy each input temp_id into its result. Order is not significant:
 {{

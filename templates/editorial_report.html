@@ -1,34 +1,34 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Economic Security Think Tank Brief</title>
-<style>body{margin:0;background:#eef1ee;color:#162938;font:15px/1.6 Arial,Helvetica,sans-serif}a{color:#185e65}h1,h2{font-family:Georgia,'Times New Roman',serif;font-weight:400}.pad{padding:28px 38px}.story-title{font-size:29px;line-height:1.2;margin:8px 0 16px}.muted{color:#52616b}.label{font-size:11px;letter-spacing:1.3px;color:#185e65;text-transform:uppercase}.meta{font-size:12px;color:#52616b}.why{font-size:17px;line-height:1.5;margin:6px 0 17px}@media(max-width:520px){.pad{padding:22px 20px!important}.story-title{font-size:25px!important}.hero{font-size:32px!important}.stats td{font-size:12px!important;padding:10px 6px!important}}@media(prefers-color-scheme:dark){body{background:#172126!important}.paper{background:#20272e!important;color:#eef1ee!important}.muted,.meta{color:#bac7cb!important}.label,a{color:#91c8cb!important}.coverage{background:#3a3126!important;color:#ebc18b!important}.quality{background:#29343a!important}}</style></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Economic-security brief</title>
+<style>body{margin:0;background:#eef2f3;color:#21343c;font:16px/1.6 Arial,Helvetica,sans-serif}a{color:#126976}.pad{padding:28px 36px}.meta{font-size:13px;color:#586970}.section{font:bold 20px/1.3 Arial,Helvetica,sans-serif;color:#165e68}.story-title{font:normal 23px/1.3 Georgia,'Times New Roman',serif;margin:0 0 8px}.small{font-size:12px;color:#586970}@media(max-width:600px){.pad{padding:22px 20px!important}.hero{font-size:29px!important}.story-title{font-size:21px!important}}@media(prefers-color-scheme:dark){body{background:#172126!important}.paper{background:#20272e!important;color:#eef1ee!important}.meta,.small{color:#bac7cb!important}.digest{background:#293c40!important}.coverage{background:#3a3126!important;color:#ebc18b!important}a,.section{color:#91c8cb!important}}</style></head>
 <body><table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="center">
-<table role="presentation" class="paper" cellpadding="0" cellspacing="0" width="100%" style="max-width:780px;background:#fffdf8;border-top:7px solid #185e65;color:#162938">
-<tr><td class="pad" style="padding:28px 38px;font-family:Arial,Helvetica,sans-serif">
-<p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65">ECONOMIC SECURITY / THINK TANK BRIEF</p>
-<p class="meta" style="font-size:12px;color:#52616b">{{ date }} &nbsp; | &nbsp; {{ edition }}</p>
-<h1 class="hero" style="font-family:Georgia,'Times New Roman',serif;font-size:40px;line-height:1.12;font-weight:400;margin:24px 0 16px">{{ headline }}</h1>
-{% if prior %}<p class="muted">{{ prior }} items were delivered earlier today. This supplement contains {{ count }} additional {{ "item" if count == 1 else "items" }}.</p>{% endif %}
-<table role="presentation" class="stats" width="100%" style="border-top:1px solid #d8dcd9;border-bottom:1px solid #d8dcd9;margin-top:22px"><tr>
-<td style="padding:16px 0;font-size:13px"><span style="font-family:Georgia,serif;font-size:29px">{{ count }}</span> included</td>
-<td style="padding:16px 0;font-size:13px"><span style="font-family:Georgia,serif;font-size:29px">{{ repeats }}</span> repeats removed</td>
-<td style="padding:16px 0;font-size:13px"><span style="font-family:Georgia,serif;font-size:29px">{{ reviewed }}</span> model reviews</td></tr></table>
-{% if coverage_limited %}<div class="coverage" style="margin-top:20px;padding:12px 15px;background:#f8efdf;border-left:3px solid #805321;color:#805321;font-size:13px">Coverage incomplete<br><span style="font-size:12px">{{ unknown }} candidates have unverified publication dates.{% if degraded %} Discovery issues: {{ degraded|join('; ') }}.{% endif %}{% if fetched_unknown or deferred %}<br>{{ fetched_unknown }} fetched pages lacked a verified date; {{ deferred }} candidates await a scheduled retry.{% endif %}</span></div>{% endif %}
+<table role="presentation" class="paper" cellpadding="0" cellspacing="0" width="100%" style="max-width:740px;background:#ffffff;border-top:5px solid #186a73;color:#21343c;font:16px/1.6 Arial,Helvetica,sans-serif">
+<tr><td class="pad" style="padding:30px 36px 15px">
+<p style="font-size:11px;letter-spacing:1.5px;color:#35666d;font-weight:bold">ECONOMIC SECURITY · THINK TANK DAILY</p>
+<h1 class="hero" style="font:normal 34px/1.2 Georgia,'Times New Roman',serif;margin:12px 0">{{ headline }}</h1>
+<p class="meta" style="font-size:13px;color:#586970">{{ date }} · {{ count }} {{ 'item' if count == 1 else 'items' }}{% if source_count %} · {{ source_count }} sources assessed{% endif %}</p>
+{% if prior %}<p class="meta">{{ prior }} items were delivered earlier today. This supplement contains only additional verified items.</p>{% endif %}
+{% if takeaways %}<h2 class="section" style="font:bold 20px Arial,sans-serif;color:#165e68">At a glance</h2>
+<table role="presentation" class="digest" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f6f6;border-left:3px solid #21737b"><tr><td style="padding:18px 20px">
+{% for item in takeaways %}<p style="margin:0 0 {{ '0' if loop.last else '14px' }};font-size:15px;line-height:1.55"><strong>{{ item.display_title }}</strong><br>{{ item.why_it_matters or item.summary }}{% if item.url %} <a href="{{ item.url }}" style="color:#126976;font-size:12px">{{ item.source_label }} →</a>{% endif %}</p>{% endfor %}
+</td></tr></table>{% endif %}
+{% if coverage_limited %}<p class="coverage" style="margin:18px 0 0;padding:11px 14px;background:#fbf4e6;border-left:3px solid #b48736;font-size:13px;line-height:1.5"><strong>Coverage incomplete.</strong>{% if unavailable %} {{ unavailable|join(', ') }} unavailable.{% endif %} Some sources have retrieval or date-verification gaps. Details at the end.</p>{% endif %}
 </td></tr>
-{% for item in items %}{% if item.section_heading %}<tr><td class="pad" style="padding:24px 38px 0"><h2 style="font-family:Georgia,serif;color:#185e65;font-size:24px">{{ item.section_heading }}</h2></td></tr>{% endif %}<tr><td class="pad" style="padding:20px 38px 30px">
-<p class="label" style="color:#185e65;font-size:11px;letter-spacing:1.3px">{{ '%02d'|format(loop.index) }} &nbsp; {{ item.category_label|upper }} / {{ item.institution|upper }}</p>
-<h2 class="story-title" style="font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:29px;line-height:1.2;margin:8px 0 16px">{{ item.title }}</h2>
-<p style="margin:0 0 14px">{% for pill in item.topic_pills %}<span style="display:inline-block;border-radius:999px;padding:4px 10px;margin:0 4px 5px 0;font: bold 11px/1.5 Arial,Helvetica,sans-serif;white-space:nowrap;background:{{ pill.background }};color:{{ pill.foreground }}">{{ pill.label }}</span>{% endfor %}{% if item.hidden_topic_count %}<span style="font-size:11px;color:#52616b">+{{ item.hidden_topic_count }} more</span>{% endif %}</p>
-<p class="meta" style="font-size:12px;color:#52616b">{{ item.author }} &nbsp; | &nbsp; Published {{ item.date or 'date unverified' }}{% if item.event_start_at %}<br>Event starts: {{ item.event_start_at }}{% endif %}</p>
-<p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65;margin-bottom:5px">WHY IT MATTERS</p>
-<p class="why" style="font-size:17px;line-height:1.5;margin:6px 0 17px">{{ item.why_it_matters }}</p>
-<p style="font-size:14px;line-height:1.65">{{ item.summary }}</p>
-<p class="meta" style="font-size:12px;color:#52616b;border-top:1px solid #d8dcd9;padding-top:14px">Priority {{ item.importance_score }} / 5 &nbsp; · &nbsp; Relevance: {{ item.relevance_confidence or 'unrated' }}{% if item.url %}<br><a href="{{ item.url }}" style="color:#185e65">Read the original publication →</a>{% endif %}</p>
-<p class="meta" style="font-size:11px;color:#52616b">Publication evidence: {{ item.publication_evidence_label }} · First discovered: {{ item.first_seen_run_date or 'Unknown' }}</p>
+{% for item in items %}<tr><td class="pad" id="{{ item.anchor }}" style="padding:15px 36px 10px">
+{% if item.section_heading %}<h2 class="section" style="font:bold 20px/1.3 Arial,sans-serif;color:#165e68;margin:8px 0 18px">{{ item.section_heading }}</h2>{% endif %}
+<h3 class="story-title" title="{{ item.title }}" style="font:normal 23px/1.3 Georgia,'Times New Roman',serif;margin:0 0 8px">{{ item.display_title }}</h3>
+<p class="meta" style="font-size:13px;color:#586970;margin:0 0 9px">{{ item.source_label }} · {{ item.category_label }} · {{ item.date_label }}</p>
+<p style="margin:9px 0 12px">{% for pill in item.topic_pills %}<span style="display:inline-block;padding:3px 10px;margin:0 4px 4px 0;border-radius:999px;font:bold 11px/1.5 Arial,sans-serif;white-space:nowrap;background:{{ pill.background }};color:{{ pill.foreground }}">{{ pill.label }}</span>{% endfor %}{% if item.hidden_topic_count %}<span class="small" title="{{ item.tags|join('; ') }}">+{{ item.hidden_topic_count }} topics</span>{% endif %}</p>
+{% if item.why_it_matters %}<p style="font-size:16px;line-height:1.55;margin:0 0 10px"><strong>Why it matters:</strong> {{ item.why_it_matters }}</p>{% endif %}
+<p style="font-size:16px;line-height:1.6;margin:0 0 12px">{{ item.summary }}</p>
+{% if item.url %}<p style="margin:0 0 16px"><a href="{{ item.url }}" style="color:#126976;font-size:14px">Read the original publication →</a></p>{% endif %}
+<hr style="border:0;border-top:1px solid #dce3e5;margin:20px 0 0">
 </td></tr>{% endfor %}
-<tr><td class="pad quality" style="padding:22px 38px;background:#f0f2ec;border-top:1px solid #d8dcd9">
-<p class="label" style="font-size:11px;letter-spacing:1.3px;color:#185e65">Scan Quality</p>
-<p class="meta" style="font-size:12px;color:#52616b">{{ discovered }} candidates assessed · {{ skipped }} filtered before review · {{ selected }} selected.<br>{{ cached }} cached decisions reused · {{ reviewed }} sent to the model.<br>{{ excluded }} excluded after review · {{ needs_review }} need analyst review.</p>
-<p class="meta" style="font-size:12px;color:#52616b">Verification queue: {{ pending }} pending; {{ paused }} paused for attention.</p>
-<p class="meta" style="font-size:12px;color:#52616b">{% if cutoff %}Coverage ends {{ cutoff }}. {% endif %}Sources recovering from a gap may have longer lookback windows. This briefing is a selection of verified items, not proof that nothing else was published.</p>
-</td></tr><tr><td class="pad" style="padding:14px 38px;font-size:10px;color:#52616b">{{ edition }} · Run {{ run_id or 'preview' }}</td></tr>
-</table></td></tr></table></body></html>
+<tr><td class="pad" id="coverage" style="padding:22px 36px 30px">
+<h2 class="section" style="font:bold 20px Arial,sans-serif;color:#165e68">Coverage and method</h2>
+{% for group in source_groups %}<p class="small" style="font-size:12px;line-height:1.6"><strong>{{ group.label }} ({{ group.count }}):</strong> {{ group.names|join(', ') }}.</p>{% endfor %}
+{% if unknown or fetched_unknown or deferred %}<p class="small">{{ unknown }} candidates have unverified dates; {{ fetched_unknown }} fetched pages lacked a verified date; {{ deferred }} await a scheduled retry.</p>{% endif %}
+<p class="small" style="font-size:12px;line-height:1.6">Articles were checked for publication dates, prior reporting and relevance using retrieved source text. This is a selection of verified items; no candidates found does not prove a source published nothing relevant.{% if cutoff %} Coverage ends {{ cutoff }}.{% endif %} Sources recovering from a gap may have longer lookback windows.</p>
+<p class="small" style="font-size:11px;line-height:1.6">Audit: {{ discovered }} candidates assessed; {{ selected }} selected for review; {{ reviewed }} sent to the model; {{ cached }} cached decisions reused; {{ excluded }} excluded; {{ needs_review }} need review. Verification queue: {{ pending }} pending, {{ paused }} paused. {{ repeats }} previously reported candidates removed.</p>
+<p class="small" style="font-size:10px">{{ edition }} · Run {{ run_id or 'preview' }}</p>
+</td></tr></table></td></tr></table></body></html>
