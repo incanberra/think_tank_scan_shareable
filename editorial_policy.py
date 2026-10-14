@@ -3,6 +3,7 @@ import re
 import unicodedata
 import config
 import evidence_selection
+import selection_policy
 from jsonschema import Draft202012Validator
 
 POLICY = """Require a concrete economic-security mechanism under the topic ontology.
@@ -28,6 +29,8 @@ procurement. Weapons performance alone is insufficient. A general opportunity to
 grow defence capacity does not establish reshoring: require a specified production
 relocation, supplier diversification or concrete domestic production policy.
 """
+
+POLICY += '\n' + selection_policy.BOUNDARY
 
 def normalized(text):
     value = unicodedata.normalize("NFKC", str(text)).translate(str.maketrans({

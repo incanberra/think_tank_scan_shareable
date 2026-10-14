@@ -1,4 +1,5 @@
 import os
+import selection_policy
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -513,8 +514,8 @@ TOPIC_ONTOLOGY = {
             "autonomous systems",
             "emerging technology",
         ],
-        "include": "Strategic technology competition, dual-use technologies, compute, AI governance, semiconductor supply, biotech, quantum, or allied tech policy.",
-        "exclude": "Consumer technology coverage without strategic, dual-use, supply-chain, or governance implications.",
+        "include": selection_policy.TECH_INCLUDE,
+        "exclude": selection_policy.TECH_EXCLUDE,
     },
     "Energy Independence and Transition": {
         "keywords": [
