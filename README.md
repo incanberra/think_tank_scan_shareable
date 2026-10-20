@@ -1,5 +1,18 @@
 # Think Tank Scanner
 
+## Model restriction — 21 October 2026
+
+Never use Anthropic Haiku for this scanner again, including scheduled runs,
+manual runs, comparisons, retries or fallback models. This is the owner's
+explicit instruction. Keep `z-ai/glm-5.3-flash` as the current default; any
+future change must use a non-Haiku model unless the owner explicitly reverses
+this restriction. Do not queue a Haiku next-run override.
+
+The 21 October Haiku 5.5 trial failed because the scanner supplied an unsupported
+temperature parameter, causing all model requests to fail and an empty report
+to be sent. Compatibility and empty-report safeguards were subsequently fixed;
+that repair does not revoke this restriction.
+
 Thin-evidence rescue is enabled by default. Up to ten eligible articles per run
 are revisited, alternating sources, using explicit same-publisher PDF, AMP or
 print/full-text links (at most two alternatives each). Set
