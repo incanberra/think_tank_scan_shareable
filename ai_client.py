@@ -96,6 +96,10 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
     payload = {"model": model or config.OPENROUTER_MODEL, "messages": messages,
                "temperature": 0.1, "response_format": {"type": "json_object"},
                "provider": {"require_parameters": True}}
+    # Haiku 5.5 advertises structured outputs but not temperature. With strict
+    # parameter routing, including temperature removes every eligible endpoint.
+    if payload['model'] == 'anthropic/claude-haiku-5.5':
+        payload.pop('temperature')
     payload["provider"].update(provider_options or {})
     payload["provider"]["require_parameters"] = True
     # GLM 5.3 requires reasoning. Its verified Fireworks route supports strict
@@ -138,6 +142,10 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
                     metadata = failure.get("error", {}).get("metadata", {}) if isinstance(failure, dict) else {}
                     if isinstance(metadata, dict):
                         record.update(provider=metadata.get("provider_name"), limit_source=metadata.get("limit_source"))
+                        record['failed_routing_step'] = metadata.get('failed_routing_step')
+                    message = failure.get('error', {}).get('message') if isinstance(failure, dict) else None
+                    if isinstance(message, str):
+                        record['api_error_message'] = message[:300]
                 except ValueError:
                     pass
                 raise RuntimeError(f"OpenRouter HTTP {response.status_code}")

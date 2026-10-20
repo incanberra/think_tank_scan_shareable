@@ -447,7 +447,7 @@ def analyze_items(items, override_model=None):
         try:
             by_id = rows_by_id(request(batch, purpose), batch)
         except Exception as exc:
-            if any(code in str(exc) for code in ("OpenRouter HTTP 400", "OpenRouter HTTP 401", "OpenRouter HTTP 402", "OpenRouter HTTP 403")):
+            if any(code in str(exc) for code in ("OpenRouter HTTP 400", "OpenRouter HTTP 401", "OpenRouter HTTP 402", "OpenRouter HTTP 403", "OpenRouter HTTP 404")):
                 # Splitting cannot repair invalid credentials, unavailable
                 # credit or an unsupported request schema.
                 for item in batch:

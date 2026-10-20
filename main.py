@@ -570,8 +570,19 @@ def stage_generate_comparison(results_by_model, output_dir, run_date_str):
     return comp_html
 
 
+def require_completed_review(results_by_model):
+    """A provider outage is not an editorial conclusion of no relevant items."""
+    for model, data in results_by_model.items():
+        completed = sum(len(data.get(k, [])) for k in ('reports', 'events', 'podcasts', 'excluded'))
+        failures = [row for row in data.get('needs_review', [])
+                    if str(row.get('exclusion_reason', '')).startswith(('model_review_failed:', 'model_response_invalid:'))]
+        if not completed and failures:
+            raise RuntimeError(f'No relevance decisions completed for {model}: model review failed. Reports saved for diagnosis; normal empty-report email blocked.')
+
+
 def stage_email(args, run_date_str, models_to_run, results_by_model, rendered_by_model, comparison_html):
     print_stage(7, "Email report")
+    require_completed_review(results_by_model)
     if args.no_email:
         print("[*] Skipping email dispatch (--no-email active).")
         return False
