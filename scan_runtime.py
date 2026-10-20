@@ -57,6 +57,7 @@ class ScanRun:
         self.output_dir.mkdir(parents=True, exist_ok=False)
         self.cutoff = cutoff or datetime.fromisoformat(run_date).replace(hour=3, tzinfo=self.started.tzinfo)
         self.reprocess = reprocess
+        self.retry_pending = retry_pending
         self.historical = historical
         self.state_path = Path(config.SEEN_LEDGER_PATH).resolve().with_name("workflow_state.json")
         if self.state_path.exists():
@@ -112,7 +113,12 @@ class ScanRun:
         return entry.get("status") == "pending" and datetime.fromisoformat(entry["next_attempt_at"]) <= self.started
 
     def pending_items(self):
-        rows = sorted(self.state["pending"].items(), key=lambda kv: kv[1].get("next_attempt_at", ""))
+        def model_failed(entry):
+            return str(entry.get('reason', '')).startswith(('model_review_failed', 'model_response_invalid'))
+        # Known review outages should recover before old unresolved date pages.
+        # Explicit retry-pending must revisit every failed model review, rather
+        # than silently dropping some behind the normal retrieval retry quota.
+        rows = sorted(self.state["pending"].items(), key=lambda kv: (not model_failed(kv[1]), kv[1].get("next_attempt_at", "")))
         selected = []
         source_counts = Counter()
         for key, entry in rows:
@@ -123,7 +129,7 @@ class ScanRun:
             if self.already_reported(item):
                 entry["status"] = "resolved_reported"
                 continue
-            if source_counts[source] >= config.PENDING_RETRIES_PER_SOURCE:
+            if source_counts[source] >= config.PENDING_RETRIES_PER_SOURCE and not (self.retry_pending and model_failed(entry)):
                 continue
             source_counts[source] += 1
             selected.append(dict(item, pending_retry=True, force_refresh=True))

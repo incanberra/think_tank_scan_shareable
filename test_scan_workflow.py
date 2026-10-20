@@ -19,6 +19,26 @@ class WorkflowTests(unittest.TestCase):
             p = patch.object(config,name,value); p.start(); self.addCleanup(p.stop)
     def run_state(self, **kw):
         return scan_runtime.ScanRun(self.root/'reports','2026-09-09',**kw)
+    def test_model_failures_take_priority_but_normal_quota_stays_bounded(self):
+        run=self.run_state()
+        for n,reason in enumerate(('publication_date_unverified','model_review_failed: HTTP 404','model_response_invalid: length')):
+            item=publication(url=f'https://example.org/research/retry-{n}')
+            run.remember_pending(item,reason)
+            run.state['pending'][scan_runtime.item_key(item)]['next_attempt_at']=(run.started-timedelta(hours=3-n)).isoformat()
+        with patch.object(config,'PENDING_RETRIES_PER_SOURCE',1):
+            chosen=run.pending_items()
+        self.assertEqual(len(chosen),1)
+        self.assertTrue(chosen[0]['url'].endswith('retry-1'))
+
+    def test_explicit_retry_recovers_all_failed_reviews_within_source(self):
+        run=self.run_state(retry_pending=True)
+        for n,reason in enumerate(('publication_date_unverified','model_review_failed: HTTP 404','model_response_invalid: length')):
+            item=publication(url=f'https://example.org/research/retry-{n}')
+            run.remember_pending(item,reason)
+            run.state['pending'][scan_runtime.item_key(item)]['next_attempt_at']=(run.started-timedelta(hours=3-n)).isoformat()
+        with patch.object(config,'PENDING_RETRIES_PER_SOURCE',1):
+            chosen=run.pending_items()
+        self.assertEqual({i['url'].rsplit('-',1)[1] for i in chosen},{'1','2'})
     def test_visible_publisher_dates(self):
         fixtures = [
             ('csis.org','<meta name="citation_publication_date" content="Tue, 09/08/2026 - 12:00">','2026-09-08'),
