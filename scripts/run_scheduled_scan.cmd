@@ -10,5 +10,5 @@ if not exist "logs\automated_scans" mkdir "logs\automated_scans"
 
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set RUN_STAMP=%%I
 
-python -u main.py > "logs\automated_scans\scan_%RUN_STAMP%.out.log" 2> "logs\automated_scans\scan_%RUN_STAMP%.err.log"
+python -u scheduled_runner.py > "logs\automated_scans\scan_%RUN_STAMP%.out.log" 2> "logs\automated_scans\scan_%RUN_STAMP%.err.log"
 exit /b %ERRORLEVEL%
