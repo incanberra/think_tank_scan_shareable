@@ -50,6 +50,10 @@ def send_report_email(run_date_str, html_content, pdf_path, model_name=None, sum
     """
     Sends the generated HTML report and PDF attachment via Gmail SMTP.
     """
+    if config.AI_PROVIDER == "antigravity":
+        print("[*] Email disabled for Antigravity experimental runs.")
+        return False
+
     # Verify SMTP configurations are present
     if not config.SMTP_SENDER_EMAIL or not config.SMTP_SENDER_PASSWORD:
         print("[!] Warning: SMTP email configurations not set in .env. Skipping email transmission.")

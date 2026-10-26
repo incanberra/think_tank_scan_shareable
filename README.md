@@ -318,3 +318,9 @@ setting effort to `none` is rejected by the provider. Other model defaults remai
 unchanged. `REVIEW_PROVIDER_ORDER` (comma-separated routing slugs) and
 `REVIEW_REASONING_EFFORT` can override these review settings. Provider-specific rate
 limits are recorded and quarantined for the remainder of that run.
+
+## Experimental Antigravity CLI preview
+
+See [the preview guide](docs/ANTIGRAVITY_PREVIEW.md) for a separate, no-email
+Antigravity run with isolated state. Start with `python antigravity_preview.py`.
+Normal and scheduled scans continue to default to OpenRouter.

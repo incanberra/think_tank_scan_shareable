@@ -29,6 +29,8 @@ def get_openrouter_model(override_model=None):
     Returns the OpenRouter model to use. Defaults to CLI argument override, 
     then .env configuration, and finally 'google/gemini-2.5-flash'.
     """
+    if config.AI_PROVIDER == "antigravity":
+        return override_model or "antigravity/" + (config.ANTIGRAVITY_MODEL or "default")
     if override_model:
         return override_model
     return config.OPENROUTER_MODEL
@@ -37,6 +39,9 @@ def generate_content_with_retry(model, messages, max_retries=5, initial_delay=3)
     """
     Sends a chat completion request to OpenRouter with retries and exponential backoff.
     """
+    if config.AI_PROVIDER == "antigravity":
+        from antigravity_client import generate
+        return generate(model, messages)
     if not config.OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY is not configured in your .env file.")
         
@@ -91,6 +96,9 @@ def generate_content_with_retry(model, messages, max_retries=5, initial_delay=3)
 def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, max_tokens=None, purpose="relevance", provider_options=None, response_schema=None):
     """Bounded JSON review requests with auditable routing and transport retries."""
     import scan_runtime
+    if config.AI_PROVIDER == "antigravity":
+        from antigravity_client import generate
+        return generate(model, messages, response_schema=response_schema or {"type": ["object", "array"]}, purpose=purpose)
     if not config.OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY is not configured")
     payload = {"model": model or config.OPENROUTER_MODEL, "messages": messages,
@@ -188,3 +196,7 @@ def generate_json_with_retry(model, messages, max_retries=5, initial_delay=3, ma
                 run.save_manifest("running")
         time.sleep(min(delay, 30) + random.uniform(0, 1))
         delay *= 2
+
+
+def is_configured():
+    return config.AI_PROVIDER == "antigravity" or bool(config.OPENROUTER_API_KEY)

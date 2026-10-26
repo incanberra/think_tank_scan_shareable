@@ -381,7 +381,7 @@ def analyze_items(items, override_model=None):
         else:
             uncached.append(item)
 
-    if not config.OPENROUTER_API_KEY:
+    if not ai_client.is_configured():
         for item in uncached:
             data["needs_review"].append(make_exclusion_item(item, {"exclusion_reason": "model_review_failed: no API key configured"}))
         data["analysis_metrics"] = metrics

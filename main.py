@@ -652,6 +652,8 @@ def print_summary(run_date_str, models_to_run, results_by_model, audit_paths, ou
 @locked
 def main():
     args = parse_args()
+    if config.AI_PROVIDER == "antigravity":
+        args.no_email = True
     run_date_str = resolve_run_date(args)
     if args.backfill_seen_ledger:
         os.makedirs(args.output_dir, exist_ok=True)

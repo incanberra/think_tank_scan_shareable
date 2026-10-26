@@ -8,6 +8,12 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+# Experimental CLI transport; OpenRouter remains the normal scanner default.
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openrouter").strip().lower()
+ANTIGRAVITY_CLI = os.getenv("ANTIGRAVITY_CLI", "agy")
+ANTIGRAVITY_MODEL = os.getenv("ANTIGRAVITY_MODEL", "").strip()
+ANTIGRAVITY_TIMEOUT_SECONDS = int(os.getenv("ANTIGRAVITY_TIMEOUT_SECONDS", "300"))
+
 # OpenRouter configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
