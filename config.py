@@ -133,7 +133,7 @@ DISCOVERY_SOURCES = [
         "name": "International Institute for Strategic Studies (IISS)",
         "domain": "iiss.org",
         "base_url": "https://www.iiss.org/",
-        "index_paths": ["/online-analysis/", "/publications/", "/research-papers/", "/events/"],
+        "index_paths": ["/online-analysis/", "/publications/", "/research-paper/", "/events/"],
         "blocked_search_fallback": True,
         "fallback_query_limit": 2,
         "methods": ["ddg", "page_extract"],
@@ -148,6 +148,7 @@ DISCOVERY_SOURCES = [
     {
         "name": "Chatham House",
         "domain": "chathamhouse.org",
+        "content_path_patterns": [r"/20\d{2}/\d{2}/[^/]+/?", r"/events/.+"],
         "base_url": "https://www.chathamhouse.org/",
         "index_paths": ["/publications/research-publications", "/publications", "/events", "/comment"],
         "blocked_search_fallback": True,

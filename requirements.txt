@@ -5,5 +5,6 @@ lxml
 reportlab
 jinja2
 requests
+curl_cffi>=0.17,<0.18
 pypdf
 jsonschema

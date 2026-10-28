@@ -318,3 +318,14 @@ setting effort to `none` is rejected by the provider. Other model defaults remai
 unchanged. `REVIEW_PROVIDER_ORDER` (comma-separated routing slugs) and
 `REVIEW_REASONING_EFFORT` can override these review settings. Provider-specific rate
 limits are recorded and quarantined for the remainder of that run.
+
+## Chatham House and IISS public access
+
+Public pages on these two domains use curl_cffi browser-compatible HTTPS.
+Install requirements.txt when deploying; the live installation also supports a
+local .vendor directory. IISS public React component data is decoded without
+executing JavaScript: listing links, article text and publication dates are
+passed through the existing extraction and eligibility checks. Related-content
+carousels are excluded from article evidence. No login or paid content is used.
+Access failures remain visible in source health; successful access does not
+guarantee complete source coverage.
