@@ -329,3 +329,6 @@ passed through the existing extraction and eligibility checks. Related-content
 carousels are excluded from article evidence. No login or paid content is used.
 Access failures remain visible in source health; successful access does not
 guarantee complete source coverage.
+
+CNAS public pages also use browser-compatible HTTPS, with the browser client
+providing its matching User-Agent rather than the legacy scanner header.

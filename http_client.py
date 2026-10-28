@@ -16,6 +16,8 @@ def browser_get(url, **kwargs):
         if vendor.is_dir():
             sys.path.insert(0, str(vendor))
         from curl_cffi import requests as browser_requests
+    if (urlparse(url).hostname or '') in {'cnas.org', 'www.cnas.org'}:
+        kwargs['headers'] = {k: v for k, v in kwargs.get('headers', {}).items() if k.lower() != 'user-agent'}
     try:
         result = browser_requests.get(url, impersonate='chrome', **kwargs)
     except browser_requests.exceptions.RequestException as exc:
@@ -43,7 +45,7 @@ def get(url, session=None, **kwargs):
             attempts += 1
             try:
                 hostname = (urlparse(url).hostname or '').lower()
-                if session is None and hostname in {'chathamhouse.org', 'www.chathamhouse.org', 'iiss.org', 'www.iiss.org'}:
+                if session is None and hostname in {'chathamhouse.org', 'www.chathamhouse.org', 'iiss.org', 'www.iiss.org', 'cnas.org', 'www.cnas.org'}:
                     response = browser_get(url, **kwargs)
                 else:
                     response = client.get(url, **kwargs)
