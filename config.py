@@ -212,8 +212,9 @@ DISCOVERY_SOURCES = [
     {
         "name": "Hudson Institute",
         "domain": "hudson.org",
+        "content_path_patterns": [r"/(?!(?:experts|people|policycenters|about|search|tags|topics|regions|support|donate)/)[a-z][a-z-]+/[^/]+/?"],
         "base_url": "https://www.hudson.org/",
-        "index_paths": ["/research", "/events"],
+        "index_paths": ["/", "/research", "/events"],
         "methods": ["ddg", "page_extract"],
     },
     {

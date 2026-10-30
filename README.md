@@ -332,3 +332,11 @@ guarantee complete source coverage.
 
 CNAS public pages also use browser-compatible HTTPS, with the browser client
 providing its matching User-Agent rather than the legacy scanner header.
+
+## Hudson and Carnegie dates (30 October 2026)
+
+Carnegie publication dates are read from the current page analytics data,
+not related content or event schedules. Hudson article dates are read from
+the article hero; event dates remain separate. Hudson discovery includes
+the homepage and topic-based article URLs. Cached extraction is refreshed
+to apply these rules. Undated content remains subject to date validation.

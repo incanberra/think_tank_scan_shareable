@@ -1,5 +1,6 @@
 """Publisher-specific dates near the article heading, never listing-wide dates."""
 import re
+import json
 from datetime import datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -41,6 +42,29 @@ def event_dates(soup, url, parse_date):
 
 def extract(soup, url, parse_date):
     host = (urlparse(url).hostname or "").removeprefix("www.")
+    if host == 'carnegieendowment.org':
+        # This named script describes the current page, unlike related cards
+        # in the Next.js payload. Parse its JSON object; never execute JS.
+        tag = soup.select_one('script#page-analytics-data')
+        raw = tag.get_text() if tag else ''
+        match = re.search(r'\bp\s*=\s*(?=\{)', raw)
+        if match:
+            try:
+                data, _ = json.JSONDecoder().raw_decode(raw[match.end():])
+                value = data.get('publication_date', '')
+                if isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+                    date = parse_date(value)
+                    if date:
+                        return date, 'carnegie_page_publication_date', value
+            except (ValueError, AttributeError):
+                pass
+    if host == 'hudson.org' and '/events/' not in urlparse(url).path:
+        heading = soup.find('h1')
+        hero = heading.find_parent(class_='hero__content') if heading else None
+        if hero:
+            date, value = unique_date(hero.select('.hero__content-top .field-date time'), parse_date)
+            if date:
+                return date, 'hudson_article_hero_publication_date', value
     if host == 'iseas.edu.sg':
         date, value = unique_date(soup.select('meta[name="citation_publication_date"]'), parse_date)
         if date:

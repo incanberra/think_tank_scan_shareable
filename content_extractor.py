@@ -122,13 +122,13 @@ def load_cache_entry(url):
             # Version 8 has validated body extraction. Refetch its dates, but
             # retain that body as a fallback if the publisher now denies access.
             # Earlier versions can contain unrelated or duplicated article text.
-            return entry if entry.get("schema_version") in {8, 9} else None
+            return entry if entry.get("schema_version") in {8, 9, 10} else None
     except Exception:
         return None
 
 
 def cache_entry_is_fresh(entry):
-    if not entry or entry.get('schema_version') != 9:
+    if not entry or entry.get('schema_version') != 10:
         return False
     saved_at = parse_cached_datetime(entry.get("cache_saved_at") if entry else "")
     if not saved_at:
@@ -157,7 +157,7 @@ def write_cache_entry(request_url, page_data, response_headers=None):
     if page_data.get("canonical_url"):
         page_data["canonical_url"] = resolve_canonical_url(page_data["canonical_url"], page_data.get("resolved_url") or request_url)
     entry = {
-        "schema_version": 9,
+        "schema_version": 10,
         "request_url": request_url,
         "canonical_url": page_data.get("canonical_url") or request_url,
         "cache_saved_at": utc_now_iso(),
@@ -779,7 +779,7 @@ def extract_page(url, timeout=20, force_refresh=False):
         return page_data_from_cache(cached_entry, "hit_fresh")
 
     headers = dict(HEADERS)
-    if cached_entry and cached_entry.get('schema_version') == 9:
+    if cached_entry and cached_entry.get('schema_version') == 10:
         if cached_entry.get("etag"):
             headers["If-None-Match"] = cached_entry["etag"]
         if cached_entry.get("last_modified"):
