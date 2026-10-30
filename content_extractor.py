@@ -855,6 +855,8 @@ def extract_page(url, timeout=20, force_refresh=False):
     page_types = {str(node.get("@type", "")).lower() for node in iter_json_ld(soup) if isinstance(node, dict)}
     is_listing = any("collectionpage" in value for value in page_types)
     paywalled = any(str(node.get("isAccessibleForFree", "")).lower() == "false" for node in iter_json_ld(soup) if isinstance(node, dict))
+    if (urlparse(response.url or url).hostname or '').removeprefix('www.') == 'rhg.com':
+        paywalled = paywalled or bool(soup.select_one('.c-restricted-page__title'))
     fallback_description = get_meta_content(soup, DESCRIPTION_META_NAMES)
     text = extract_text_from_html(response.text, fallback_description=fallback_description, source_url=response.url or url)
     linked_pdf_url = ""

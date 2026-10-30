@@ -89,6 +89,8 @@ THINK_TANKS = [
     "Mercator Institute for China Studies (MERICS)",
     "Economic Research Institute for ASEAN and East Asia (ERIA)",
     "ISEAS–Yusof Ishak Institute",
+    "Rhodium Group",
+    "Institute of Geoeconomics (IOG)",
 ]
 
 # Source registry used by v3 discovery and audit logic. RSS-capable sources keep
@@ -250,6 +252,15 @@ DISCOVERY_SOURCES = [
 # Official, server-rendered publication indexes verified on 14 October 2026.
 # Restrict these sources to detail routes, avoiding people/programme/category pages.
 DISCOVERY_SOURCES.extend([
+    {"name": "Rhodium Group", "domain": "rhg.com", "base_url": "https://rhg.com/",
+     "index_paths": ["/china/research/"],
+     "content_path_patterns": [r"^/research/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
+    {"name": "Institute of Geoeconomics (IOG)", "domain": "instituteofgeoeconomics.org",
+     "base_url": "https://instituteofgeoeconomics.org/",
+     "index_paths": ["/en/research/"],
+     "content_path_patterns": [r"^/en/research/[^/]+/?$"],
+     "methods": ["ddg", "page_extract"]},
     {"name": "Peterson Institute for International Economics (PIIE)",
      "domain": "piie.com", "base_url": "https://www.piie.com/",
      "index_paths": ["/research", "/blogs/realtime-economics"],

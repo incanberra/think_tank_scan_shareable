@@ -340,3 +340,8 @@ not related content or event schedules. Hudson article dates are read from
 the article hero; event dates remain separate. Hudson discovery includes
 the homepage and topic-based article URLs. Cached extraction is refreshed
 to apply these rules. Undated content remains subject to date validation.
+
+Rhodium Group public China research and IOG English research are enabled
+from 30 October 2026. Existing publication windows, duplicate checks and
+strategic relevance rules apply; historical articles are not backfilled.
+Rhodium login-only pages are marked as restricted evidence.
