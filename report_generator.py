@@ -10,6 +10,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 import config
+from coverage_grouping import group_publications
 
 METHODOLOGY_TEXT = (
     "Reports were discovered through source-specific RSS feeds, source-native sitemaps, "
@@ -297,7 +298,7 @@ def format_markdown_card(item, category_label="Date"):
         evidence_lines = f"\nEvidence checked: {evidence}\n"
     
     card = f"""**{item['institution']}**
-### {item['title']}
+### {item.get('coverage_group_title') or item['title']}
 
 {date_field}
 
@@ -317,6 +318,15 @@ Importance: {stars} - {rating_label}
 **Link**
 [{item['url']}]({item['url']})
 """
+    if item.get("supporting_publications"):
+        card += "\n**Related coverage**\n\n"
+        for other in item["supporting_publications"]:
+            url = other.get("url") or ""
+            if url.startswith(("https://", "http://")):
+                card += f"- [{other['title']}]({url})"
+                if other.get("why_it_matters"):
+                    card += f" — {other['why_it_matters']}"
+                card += "\n"
     return card
 
 def tiered_cards(items, date_label):
@@ -337,7 +347,7 @@ def generate_markdown(analyzed_data, run_date_str, status_notes, recall_audit=No
     recall_audit = sanitize_report_data(recall_audit)
     # 1. New Publications Cards
     if analyzed_data["reports"]:
-        pub_cards = tiered_cards(analyzed_data["reports"], "Date")
+        pub_cards = tiered_cards(group_publications(analyzed_data["reports"]), "Date")
     else:
         pub_cards = "*No qualifying items found in this coverage window.*"
         

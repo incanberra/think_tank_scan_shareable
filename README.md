@@ -63,6 +63,26 @@ Edit `.env` before running a live scan. At minimum, set `OPENROUTER_API_KEY`. To
 
 ## Running Scans
 
+The discovery queue reserves room for fresh and recently dated items while
+continuing to work through deferred links. Verified stale items are retired
+against the source's coverage window. Optional sitemap probes that return
+404 or 410 are suppressed for seven days and tracked separately from real
+retrieval failures. The daily edition groups closely related publications
+under a shared headline and retains each original link.
+
+If delivery fails, use the run directory printed in the error to retry the
+saved HTML and PDF without fetching or reviewing articles again:
+
+```powershell
+python main.py --retry-email "reports/runs/RUN_ID"
+```
+
+The delivery record tracks SMTP acceptance for each original recipient. A
+retry targets recipients with known refusals or unattempted deliveries.
+If a disconnect left acceptance uncertain, check the sender's mail first.
+Append `--retry-uncertain-email` only if you intend to retry those addresses
+and accept a possible duplicate.
+
 Run with the model configured in `.env`:
 
 ```powershell

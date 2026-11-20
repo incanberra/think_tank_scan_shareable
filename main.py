@@ -4,12 +4,13 @@ import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import eligibility
 import evidence_rescue
 import scan_runtime
-from state_storage import locked
+from state_storage import atomic_json_write, locked
 
 import analyzer
 import audit_logger
@@ -134,7 +135,15 @@ def parse_args():
     parser.add_argument("--as-of", help="Coverage end: now, or an ISO-8601 timestamp with timezone")
     parser.add_argument("--reprocess", action="store_true", help="Bypass relevance-decision cache; previously reported items stay excluded")
     parser.add_argument("--retry-pending", action="store_true", help="Retry pending and paused verification cases now")
-    return parser.parse_args()
+    parser.add_argument("--retry-email", metavar="RUN_DIRECTORY", help="Retry delivery of a saved edition")
+    parser.add_argument("--retry-uncertain-email", action="store_true",
+                        help="Include recipients whose SMTP acceptance could not be confirmed")
+    args = parser.parse_args()
+    if args.retry_uncertain_email and not args.retry_email:
+        parser.error("--retry-uncertain-email requires --retry-email")
+    if args.retry_email and args.no_email:
+        parser.error("--retry-email cannot be combined with --no-email")
+    return args
 
 
 def resolve_run_date(args):
@@ -589,46 +598,31 @@ def stage_email(args, run_date_str, models_to_run, results_by_model, rendered_by
 
     primary_model = models_to_run[0]
     primary_rendered = rendered_by_model[primary_model]
-    primary_counts = analysis_counts(results_by_model[primary_model])
+    comparison = bool(comparison_html)
+    html_path = (f"report_{run_date_str}_comparison.html" if comparison else primary_rendered["html_path"])
+    subject = emailer.build_email_subject(
+        run_date_str, primary_model, analysis_counts(results_by_model[primary_model]), comparison,
+    )
+    model_reports = {
+        slugify_model_name(model): os.path.basename(rendered_by_model[model]["json_path"])
+        for model in models_to_run
+    }
+    emailer.queue_saved_email(
+        args.output_dir, run_date_str, subject, html_path, primary_rendered["pdf_path"], model_reports,
+    )
+    return emailer.deliver_saved_email(args.output_dir)
 
-    if len(models_to_run) > 1:
-        print("[*] Emailing comparison report...")
-        email_sent = emailer.send_report_email(
-            run_date_str,
-            comparison_html,
-            primary_rendered["pdf_path"],
-            model_name=primary_model,
-            summary_counts=primary_counts,
-            is_comparison=True,
-        )
-    else:
-        print("[*] Emailing primary model report...")
-        email_sent = emailer.send_report_email(
-            run_date_str,
-            primary_rendered["html"],
-            primary_rendered["pdf_path"],
-            model_name=primary_model,
-            summary_counts=primary_counts,
-        )
 
-    if email_sent:
-        print("[+] Email successfully dispatched!")
-        for model in models_to_run:
-            model_slug = slugify_model_name(model)
-            delivery_audit = seen_ledger.mark_delivery_items(
-                args.output_dir,
-                run_date_str,
-                model_slug,
-                results_by_model[model],
-                delivery_status="emailed",
-            )
-            print(
-                f"[+] Updated seen ledger delivery history for {delivery_audit['delivered_count']} items: "
-                f"{delivery_audit['seen_ledger_path']}"
-            )
-    else:
-        print("[!] Email dispatch failed. See console warnings.")
-    return email_sent
+def retry_edition_email(directory, retry_uncertain=False):
+    directory = Path(directory)
+    manifest_path = directory / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    email_sent = emailer.deliver_saved_email(directory, retry_uncertain=retry_uncertain)
+    manifest["email_sent"] = email_sent
+    manifest["email_retried_at"] = datetime.now(ZoneInfo(config.TIMEZONE_CANBERRA)).isoformat()
+    atomic_json_write(manifest_path, manifest)
+    if not email_sent:
+        raise RuntimeError("Some recipients still lack an SMTP acceptance receipt")
 
 
 def print_summary(run_date_str, models_to_run, results_by_model, audit_paths, output_dir, email_sent):
@@ -652,6 +646,9 @@ def print_summary(run_date_str, models_to_run, results_by_model, audit_paths, ou
 @locked
 def main():
     args = parse_args()
+    if args.retry_email:
+        retry_edition_email(args.retry_email, args.retry_uncertain_email)
+        return
     run_date_str = resolve_run_date(args)
     if args.backfill_seen_ledger:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -691,7 +688,7 @@ def main():
         with run.stage("email"):
             email_sent = stage_email(args, run_date_str, models_to_run, results_by_model, rendered_by_model, comparison_html)
         if not args.no_email and not email_sent:
-            raise RuntimeError("Reports were saved, but email delivery failed")
+            raise RuntimeError(f"Reports were saved. Retry delivery with --retry-email \"{args.output_dir}\"")
         run.finish(email_sent)
         print_summary(run_date_str, models_to_run, results_by_model, audit_paths, args.output_dir, email_sent)
 

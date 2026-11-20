@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from collections import defaultdict
 from datetime import datetime
 
@@ -164,6 +165,8 @@ def build_source_health(raw_items, enriched_items, status_notes, enrichment_audi
                 "source": source,
                 "status": status_notes.get(source, "not checked"),
                 "availability": scan_runtime.source_state(status_notes.get(source, "not checked")),
+                "optional_sitemap_misses": sum(int(value) for value in re.findall(
+                    r"optional sitemap misses (\d+)", status_notes.get(source, ""))),
                 "raw_candidates": raw_count,
                 "enriched_candidates": enriched_count,
                 "selected_for_review": selected_by_source.get(source, 0),

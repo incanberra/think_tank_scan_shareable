@@ -22,6 +22,7 @@
 {% if item.why_it_matters %}<p style="font-size:16px;line-height:1.55;margin:0 0 10px"><strong>Why it matters:</strong> {{ item.why_it_matters }}</p>{% endif %}
 <p style="font-size:16px;line-height:1.6;margin:0 0 12px">{{ item.summary }}</p>
 {% if item.url %}<p style="margin:0 0 16px"><a href="{{ item.url }}" style="color:#126976;font-size:14px">Read the original publication →</a></p>{% endif %}
+{% if item.supporting_publications %}<p style="margin:8px 0 4px"><strong>Related coverage</strong></p><ul style="padding-left:20px;margin:0 0 16px">{% for other in item.supporting_publications %}<li><a href="{{ other.url }}">{{ other.title }}</a>{% if other.finding %}<br>{{ other.finding }}{% endif %}</li>{% endfor %}</ul>{% endif %}
 <hr style="border:0;border-top:1px solid #dce3e5;margin:20px 0 0">
 </td></tr>{% endfor %}
 <tr><td class="pad" id="coverage" style="padding:22px 36px 30px">

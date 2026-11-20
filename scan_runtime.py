@@ -32,6 +32,8 @@ def current():
 
 def source_state(status):
     text = str(status).lower()
+    if "/sitemap no supported map" in text and "/index not configured" in text and "checked/found" not in text:
+        return "unavailable"
     failed = any(word in text for word in ("fail", "unavailable", "blocked", "403", "429", "not checked"))
     if failed:
         return "degraded" if " found " in text or "/found " in text else "unavailable"
@@ -74,6 +76,10 @@ class ScanRun:
         if retry_pending:
             for row in self.state["pending"].values():
                 row.update(status="pending", attempts=0, next_attempt_at=self.started.isoformat())
+        self.state["sitemap_missing_until"] = {
+            url: expiry for url, expiry in self.state.get("sitemap_missing_until", {}).items()
+            if expiry > self.started.timestamp()
+        }
         import seen_ledger
         self.ledger = seen_ledger.load_ledger(str(self.root))
         self.prior_delivered = sum(any(r.get("run_date") == run_date and r.get("status") == "emailed" for r in e.get("delivery_history", [])) for e in self.ledger["items"].values())
@@ -112,6 +118,24 @@ class ScanRun:
     def due(self, entry):
         return entry.get("status") == "pending" and datetime.fromisoformat(entry["next_attempt_at"]) <= self.started
 
+    def confirmed_stale(self, item):
+        """Use verified publication history, or the publisher's event end/start."""
+        from content_extractor import parse_date
+        import seen_ledger
+
+        if self.historical or self.reprocess:
+            return False
+        is_event = item.get("item_type") == "event"
+        if is_event:
+            value = item.get("event_end_at") or item.get("event_start_at")
+            date = parse_date(value)
+            return bool(date and date.astimezone(self.cutoff.tzinfo).date() < self.cutoff.date())
+        key = seen_ledger.lookup_item_key(self.ledger["items"], item)
+        entry = self.ledger["items"].get(key, {})
+        first = parse_date(entry.get("first_verified_publication_date"))
+        last = parse_date(entry.get("last_verified_publication_date"))
+        return bool(first and first == last and first < self.window(item.get("institution"))[0])
+
     def pending_items(self):
         def model_failed(entry):
             return str(entry.get('reason', '')).startswith(('model_review_failed', 'model_response_invalid'))
@@ -122,9 +146,13 @@ class ScanRun:
         selected = []
         source_counts = Counter()
         for key, entry in rows:
+            item = entry["item"]
+            if not model_failed(entry) and self.confirmed_stale(item):
+                self.state["pending"].pop(key)
+                self.metrics["stale_pending_retired"] += 1
+                continue
             if not self.due(entry):
                 continue
-            item = entry["item"]
             source = item.get("institution", "Unknown")
             if self.already_reported(item):
                 entry["status"] = "resolved_reported"
@@ -154,6 +182,7 @@ class ScanRun:
         return list(merged.values())
 
     def cap_native(self, items):
+        from content_extractor import parse_date
         from source_discovery import candidate_priority
         by_key = {item_key(item): item for item in items}
         source = items[0].get("institution") if items else None
@@ -176,18 +205,34 @@ class ScanRun:
                 self.state["backlog"].pop(key, None)
                 continue
             pending = self.state["pending"].get(key)
+            evidence_item = {**(pending or {}).get("item", {}), **item}
+            if self.confirmed_stale(evidence_item):
+                self.metrics["stale_native_retired"] += 1
+                self.state["backlog"].pop(key, None)
+                continue
             if pending and (not self.due(pending) or pending.get("status") == "paused") and not self.reprocess:
                 self.metrics["pending_waiting_before_cap"] += 1
                 continue
             available.append(item)
-        # Oldest deferred candidates get a turn before fresh arrivals.
-        available.sort(key=lambda i: (0, self.state["backlog"][item_key(i)]["deferred_at"]) if item_key(i) in self.state["backlog"] else (1, ""))
-        backlog_items = [i for i in available if item_key(i) in self.state["backlog"]]
+        backlog_items = sorted(
+            (i for i in available if item_key(i) in self.state["backlog"]),
+            key=lambda i: self.state["backlog"][item_key(i)]["deferred_at"],
+        )
         fresh = sorted([i for i in available if item_key(i) not in self.state["backlog"]], key=candidate_priority, reverse=True)
         ordered = backlog_items + fresh
         if len(ordered) > config.MAX_BACKLOG_PER_SOURCE:
             raise RuntimeError(f"Discovery backlog for {source} exceeds {config.MAX_BACKLOG_PER_SOURCE}; drain or review retained work before expanding discovery")
-        chosen = ordered[:config.MAX_NATIVE_CANDIDATES_PER_SOURCE]
+        limit = max(1, config.MAX_NATIVE_CANDIDATES_PER_SOURCE)
+        recent_start = self.cutoff - timedelta(hours=config.COVERAGE_WINDOW_HOURS)
+        dated_backlog = []
+        for item in backlog_items:
+            published = parse_date(item.get("published_at"))
+            if published and recent_start <= published <= self.cutoff:
+                dated_backlog.append(item)
+        priority_pool = sorted(fresh + dated_backlog, key=candidate_priority, reverse=True)
+        reserved = priority_pool[:max(1, limit // 2)]
+        reserved_keys = {item_key(item) for item in reserved}
+        chosen = (reserved + [item for item in ordered if item_key(item) not in reserved_keys])[:limit]
         for item in ordered:
             key = item_key(item)
             self.state["backlog"].setdefault(key, {"item": serializable(item), "deferred_at": self.started.isoformat()})
@@ -205,7 +250,7 @@ class ScanRun:
         attempts = int(entry.get("attempts", 0)) + (entry.get("last_attempt_run") != self.run_id)
         delay = min(2 ** max(0, attempts - 1), 7)
         payload = dict(entry.get("item", {}))
-        payload.update({k: item.get(k) for k in ("url", "canonical_url", "institution", "source_domain", "title", "summary", "published_at", "date_source", "item_type", "discovery_methods") if item.get(k) is not None})
+        payload.update({k: item.get(k) for k in ("url", "canonical_url", "institution", "source_domain", "title", "summary", "published_at", "date_source", "item_type", "discovery_methods", "event_start_at", "event_end_at") if item.get(k) is not None})
         self.state["pending"][key] = {"item": serializable(payload), "reason": reason, "attempts": attempts,
             "status": "paused" if attempts >= config.PENDING_MAX_ATTEMPTS else "pending",
             "first_queued_at": entry.get("first_queued_at", self.started.isoformat()),

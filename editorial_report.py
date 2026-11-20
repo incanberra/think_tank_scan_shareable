@@ -14,6 +14,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, KeepTogether
 
 import scan_runtime
+from coverage_grouping import group_publications
 from topic_badges import badges, TopicPills
 
 SOURCE_LABELS = {
@@ -70,16 +71,24 @@ def context(data, date, audit=None):
     meta = run.metadata() if run else data.get("run") or audit.get("run") or {}
     items = []
     for category, label in (("reports", "Publication"), ("events", "Event"), ("podcasts", "Podcast / video")):
-        for original in data.get(category, []):
+        originals = data.get(category, [])
+        if category == "reports":
+            originals = group_publications(originals)
+        for original in originals:
             item = dict(original)
             summary = item.get("summary", "")
             why = item.get("why_it_matters", "")
             if summary.startswith("Why it matters:\n") and "\n\nSummary:\n" in summary:
                 why, summary = summary[len("Why it matters:\n"):].split("\n\nSummary:\n", 1)
             item.update(summary=concise(summary), why_it_matters=concise(why, 1),
-                        display_title=display_title(item),
+                        display_title=item.get("coverage_group_title") or display_title(item),
                         source_label=SOURCE_LABELS.get(item.get('institution'), item.get('institution', '')),
                         url=safe_url(item.get("url")), category_label=label)
+            item["supporting_publications"] = [
+                {"title": display_title(other), "url": safe_url(other.get("url")),
+                 "finding": concise(other.get("why_it_matters") or other.get("summary"), 1)}
+                for other in item.get("supporting_publications", []) if safe_url(other.get("url"))
+            ]
             item["topic_pills"], item["hidden_topic_count"] = badges(item, limit=2)
             item['date_label'] = 'Published ' + (item.get('date') or 'Date unverified')
             if item.get('event_start_at'):
@@ -196,6 +205,12 @@ def generate_pdf(data, date, status_notes, output_path, recall_audit=None):
         block.append(p(item['summary']))
         if item['url']:
             block.append(Paragraph('<link href="' + html.escape(item['url'], quote=True) + '" color="#186a73">Read the original publication</link>', styles['small']))
+        if item["supporting_publications"]:
+            story.append(KeepTogether(block))
+            block = [p("Related coverage", "small")]
+            for supporting in item["supporting_publications"]:
+                link = '<link href="' + html.escape(supporting["url"], quote=True) + '" color="#186a73">' + html.escape(supporting["title"]) + '</link>'
+                block.append(Paragraph(link + '<br/>' + html.escape(supporting["finding"]), styles['small']))
         block.extend([Spacer(1, 8), HRFlowable(width='100%', color=line, thickness=.5), Spacer(1, 12)])
         # Keep the section heading, metadata and complete compact entry together.
         story.append(KeepTogether(block))

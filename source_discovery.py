@@ -291,18 +291,17 @@ def candidate_from_url(source, url, method, title="", summary="", date_value="",
 
 def discover_sitemap_urls(source):
     base = source_base_url(source)
-    candidates = set(source.get("sitemap_urls", []))
-    for path in COMMON_SITEMAP_PATHS:
-        candidates.add(urljoin(base, path))
+    declared = {urljoin(base, url) for url in source.get("sitemap_urls", [])}
 
     robots_url = urljoin(base, "/robots.txt")
     robots_text, status = fetch_text(robots_url, timeout=12)
     if robots_text:
         for line in robots_text.splitlines():
             if line.lower().startswith("sitemap:"):
-                candidates.add(line.split(":", 1)[1].strip())
+                declared.add(urljoin(base, line.split(":", 1)[1].strip()))
 
-    return sorted(candidates), status
+    guessed = {urljoin(base, path) for path in COMMON_SITEMAP_PATHS} - declared
+    return sorted(declared) + sorted(guessed), guessed, status
 
 
 def parse_sitemap(text):
@@ -351,28 +350,45 @@ def sitemap_url_relevant(sitemap_url):
 
 def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_urls=2500):
     start_dt, end_dt = content_extractor.coverage_window(run_date_str, coverage_hours, source["name"])
-    sitemap_urls, robots_status = discover_sitemap_urls(source)
+    sitemap_urls, guessed, robots_status = discover_sitemap_urls(source)
     seen_sitemaps = set()
     queue = [url for url in sitemap_urls if sitemap_url_relevant(url)]
     raw_candidates = {}
     rejected = []
     checked = 0
+    usable = 0
+    missing_probes = 0
     failures = []
+    run = scan_runtime.current()
+    missing_until = run.state["sitemap_missing_until"] if run else {}
 
     while queue and checked < max_nested:
         sitemap_url = queue.pop(0)
         if sitemap_url in seen_sitemaps:
             continue
         seen_sitemaps.add(sitemap_url)
+        if sitemap_url in guessed and sitemap_url in missing_until:
+            missing_probes += 1
+            continue
         text, status = fetch_text(sitemap_url, timeout=20)
         checked += 1
         if not text:
+            if sitemap_url in guessed and status in {"HTTP 404", "HTTP 410"}:
+                missing_probes += 1
+                if run:
+                    missing_until[sitemap_url] = run.started.timestamp() + 7 * 86400
+                continue
             failures.append(f"{sitemap_url} ({status})")
             continue
 
+        if not re.search(r"<(?:[\w-]+:)?(?:urlset|sitemapindex)\b", text, re.I):
+            failures.append(f"{sitemap_url} (invalid sitemap)")
+            continue
+        usable += 1
         nested, urls = parse_sitemap(text)
         for nested_url in nested:
             if nested_url not in seen_sitemaps and sitemap_url_relevant(nested_url):
+                guessed.discard(nested_url)
                 queue.append(nested_url)
 
         for entry in urls[:max_urls]:
@@ -405,14 +421,18 @@ def scan_sitemaps(source, run_date_str, coverage_hours=48, max_nested=20, max_ur
     status = "checked"
     if raw_candidates:
         status += f"/sitemap found {len(raw_candidates)} raw candidates"
-    elif checked:
+    elif usable:
         status += "/sitemap no recent content candidates"
+    elif missing_probes and not failures:
+        status += "/sitemap no supported map"
     else:
         status += f"/sitemap unavailable ({robots_status})"
     if failures:
         status += f"; failures {len(failures)}"
     if rejected:
         status += f"; rejected {len(rejected)}"
+    if missing_probes:
+        status += f"; optional sitemap misses {missing_probes}"
 
     return list(raw_candidates.values()), status, rejected
 
@@ -536,11 +556,9 @@ def candidate_priority(item):
     sitemap = 1 if "sitemap" in methods else 0
     index = 1 if "index_page" in methods else 0
     timestamp = 0
-    if item.get("published_at"):
-        try:
-            timestamp = item["published_at"].timestamp()
-        except Exception:
-            timestamp = 0
+    published = content_extractor.parse_date(item.get("published_at"))
+    if published:
+        timestamp = published.timestamp()
     return (has_date, sitemap, index, timestamp, len(item.get("summary", "")))
 
 
